@@ -24,7 +24,7 @@
 ]]
 
 local Library = {}
-Library.Version = "2.0.0"
+Library.Version = "2.0.1"
 
 --=============================================================================
 -- SERVİSLER
@@ -124,19 +124,47 @@ Library._destroyed    = false
 --=============================================================================
 -- KÜÇÜK YARDIMCILAR
 --=============================================================================
+Library._propertyWarnings = {}
+
+local function WarnOnce(key, err)
+	if Library._propertyWarnings[key] then return end
+	Library._propertyWarnings[key] = true
+	warn("[AuroraUI] '" .. tostring(key) .. "' ayarlanamadı: " .. tostring(err))
+end
+
 local function New(className, props, parent)
-	local inst = Instance.new(className)
+	local ok, inst = pcall(Instance.new, className)
+	if not ok or not inst then
+		warn("[AuroraUI] Instance.new('" .. tostring(className) .. "') başarısız: " .. tostring(inst))
+		-- En kötü ihtimalle Frame'e düş (kütüphane tamamen çökmesin)
+		local fallbackOk, fallback = pcall(Instance.new, "Frame")
+		inst = fallbackOk and fallback or nil
+		if not inst then return nil end
+	end
+
 	local parentRef = parent
 	if props then
 		for key, value in pairs(props) do
 			if key == "Parent" then
 				parentRef = value
 			else
-				inst[key] = value
+				local assigned, err = pcall(function()
+					inst[key] = value
+				end)
+				if not assigned then
+					WarnOnce(key, err)
+				end
 			end
 		end
 	end
-	if parentRef then inst.Parent = parentRef end
+	if parentRef then
+		local parented, err = pcall(function()
+			inst.Parent = parentRef
+		end)
+		if not parented then
+			WarnOnce("Parent", err)
+		end
+	end
 	return inst
 end
 
@@ -930,20 +958,38 @@ function Library:CreateWindow(config)
 	screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 	screenGui.DisplayOrder = 999
 
-	local parented = pcall(function() screenGui.Parent = CoreGui end)
-	if not parented or not screenGui.Parent then
-		local player = Players and Players.LocalPlayer
-		local playerGui = nil
-		if player then
-			local ok, result = pcall(function()
-				return player:FindFirstChild("PlayerGui") or player:WaitForChild("PlayerGui", 5)
-			end)
-			if ok then playerGui = result end
+	-- GUI ebeveyni: gethui() -> CoreGui -> PlayerGui (executor uyumluluğu)
+	local function PickParent()
+		if type(gethui) == "function" then
+			local ok, hidden = pcall(gethui)
+			if ok and hidden then return hidden end
 		end
-		if playerGui then
-			screenGui.Parent = playerGui
-		else
-			screenGui.Parent = CoreGui
+		if CoreGui then
+			local ok = pcall(function() return #CoreGui:GetChildren() end)
+			if ok then return CoreGui end
+		end
+		local player = Players and Players.LocalPlayer
+		if player then
+			local ok, playerGui = pcall(function()
+				return player:FindFirstChild("PlayerGui")
+			end)
+			if ok and playerGui then return playerGui end
+		end
+		return nil
+	end
+
+	local guiParent = PickParent()
+	local attached = false
+	if guiParent then
+		attached = pcall(function() screenGui.Parent = guiParent end)
+	end
+	if not attached or not screenGui.Parent then
+		local player = Players and Players.LocalPlayer
+		local ok, playerGui = pcall(function()
+			return player and player:WaitForChild("PlayerGui", 5)
+		end)
+		if ok and playerGui then
+			pcall(function() screenGui.Parent = playerGui end)
 		end
 	end
 
@@ -1514,7 +1560,7 @@ function Library:CreateWindow(config)
 	end
 
 	local function createPage()
-		local page = New("ScrollingFrame", {
+		local frame = New("ScrollingFrame", {
 			Name = "Page",
 			Size = UDim2.fromScale(1, 1),
 			BackgroundTransparency = 1,
@@ -1532,7 +1578,7 @@ function Library:CreateWindow(config)
 			Name = "Cards",
 			Size = UDim2.new(1, 0, 0, 0),
 			BackgroundTransparency = 1,
-			Parent = page,
+			Parent = frame,
 		})
 
 		local empty = New("Frame", {
@@ -1568,15 +1614,20 @@ function Library:CreateWindow(config)
 			Parent = empty,
 		})
 
-		page._holder = holder
-		page._cards = {}
-		page._empty = empty
+		-- DİKKAT: Roblox Instance'larına özel alan yazılamaz (userdata).
+		-- Bu yüzden sayfa verisini ayrı bir Lua tablosunda tutuyoruz.
+		local pageObject = {
+			_frame = frame,
+			_holder = holder,
+			_empty = empty,
+			_cards = {},
+		}
 
-		Connect(page:GetPropertyChangedSignal("AbsoluteSize"), function()
-			windowObject:_relayout(page)
+		Connect(frame:GetPropertyChangedSignal("AbsoluteSize"), function()
+			windowObject:_relayout(pageObject)
 		end)
 
-		return page
+		return pageObject
 	end
 
 	windowObject._createPage = createPage
@@ -1585,9 +1636,9 @@ function Library:CreateWindow(config)
 	-- LAYOUT / ARAMA
 	--==========================================================================
 	function windowObject:_relayout(page)
-		if not page or not page.Parent then return end
+		if not page or not page._frame or not page._frame.Parent then return end
 
-		local sizeNow = page.AbsoluteSize
+		local sizeNow = page._frame.AbsoluteSize
 		local scaleFactor = (baseScale and baseScale > 0) and baseScale or 1
 		-- AbsoluteSize ekran pikselidir; kart ölçüleri UIScale'li yerel koordinatta.
 		local localWidth = sizeNow.X > 0 and (sizeNow.X / scaleFactor) or 664
@@ -1650,7 +1701,7 @@ function Library:CreateWindow(config)
 
 		local totalHeight = math.max(0, y - gap) + 14
 		page._holder.Size = UDim2.new(1, 0, 0, totalHeight)
-		page.CanvasSize = UDim2.new(0, 0, 0, totalHeight)
+		page._frame.CanvasSize = UDim2.new(0, 0, 0, totalHeight)
 		if page._empty then
 			page._empty.Visible = (#visibleCards == 0 and (self._currentQuery or "") ~= "")
 		end
@@ -1869,7 +1920,7 @@ function Library:CreateWindow(config)
 			-- aktif sekmenin içeriğiyle üst üste biner.
 			if self._window._activeTab == self then
 				for _, page in ipairs(self._pages) do
-					page.Visible = (page == sub._page)
+					page._frame.Visible = (page == sub._page)
 				end
 				self._window:_relayout(sub._page)
 			end
@@ -1879,21 +1930,21 @@ function Library:CreateWindow(config)
 			self._chips.Visible = true
 			local page = self:_currentPage()
 			for _, candidate in ipairs(self._pages) do
-				candidate.Visible = (candidate == page)
+				candidate._frame.Visible = (candidate == page)
 			end
 			self._buttonGradient.Enabled = true
 			Tween(self._button, { BackgroundTransparency = 0.82 }, 0.2)
 			Tween(self._marker, { Size = UDim2.new(0, 3, 0, 16), BackgroundTransparency = 0 }, 0.22)
 			TintIcon(self._icon, theme.Text)
-			page.Position = UDim2.new(0, 0, 0, 8)
-			Tween(page, { Position = UDim2.new(0, 0, 0, 0) }, 0.26, Enum.EasingStyle.Quint)
+			page._frame.Position = UDim2.new(0, 0, 0, 8)
+			Tween(page._frame, { Position = UDim2.new(0, 0, 0, 0) }, 0.26, Enum.EasingStyle.Quint)
 			self._window:_relayout(page)
 		end
 
 		function tab:_deactivate()
 			self._chips.Visible = false
 			for _, candidate in ipairs(self._pages) do
-				candidate.Visible = false
+				candidate._frame.Visible = false
 			end
 			self._buttonGradient.Enabled = false
 			Tween(self._button, { BackgroundTransparency = 1 }, 0.18)
