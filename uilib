@@ -1,0 +1,901 @@
+--[[
+    Vape-Style UI Library (rebuilt)
+    Kullanım:
+        local GuiLibrary = loadstring(game:HttpGet("url/NewGuiLibrary.lua"))()
+        local GUI = GuiLibrary.CreateMainWindow()
+        ...
+]]
+
+local Players           = game:GetService("Players")
+local UserInputService  = game:GetService("UserInputService")
+local TweenService      = game:GetService("TweenService")
+local TextService       = game:GetService("TextService")
+local RunService        = game:GetService("RunService")
+local Lighting          = game:GetService("Lighting")
+
+local GuiLibrary = {}
+GuiLibrary.ObjectsThatCanBeSaved = {}
+GuiLibrary.Profiles              = {default = {Keybind = "", Selected = true}}
+GuiLibrary.CurrentProfile        = "default"
+GuiLibrary.RainbowSpeed          = 0.5
+GuiLibrary.ToggleTooltips        = true
+GuiLibrary.Notifications         = true
+GuiLibrary.ToggleNotifications   = true
+GuiLibrary.PressedKeybindKey     = ""
+GuiLibrary.KeybindCaptured       = false
+GuiLibrary.SelfDestructEvent     = Instance.new("BindableEvent")
+GuiLibrary.UpdateHudEvent        = Instance.new("BindableEvent")
+GuiLibrary.BaseDirectory         = "vape/"
+
+-- ████████████████████████████████████████████████████████████
+-- Tema
+-- ████████████████████████████████████████████████████████████
+local C = {
+    Bg         = Color3.fromRGB(26, 25, 26),
+    BgDark     = Color3.fromRGB(20, 20, 20),
+    Element    = Color3.fromRGB(31, 30, 31),
+    ElementHov = Color3.fromRGB(38, 37, 38),
+    Border     = Color3.fromRGB(40, 39, 40),
+    Text       = Color3.fromRGB(200, 200, 200),
+    TextDim    = Color3.fromRGB(137, 136, 137),
+    TextMuted  = Color3.fromRGB(85, 84, 85),
+    Accent     = Color3.fromHSV(0.4, 0.9, 1),
+    Enable     = Color3.fromRGB(5, 133, 104),
+    Disable    = Color3.fromRGB(60, 60, 60),
+}
+local FONT       = Enum.Font.SourceSans
+local FONT_BOLD  = Enum.Font.SourceSansBold
+local ANIM       = TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+
+-- ████████████████████████████████████████████████████████████
+-- Yardımcılar
+-- ████████████████████████████████████████████████████████████
+local function new(class, props, parent)
+    local i = Instance.new(class)
+    for k, v in next, props or {} do i[k] = v end
+    if parent then i.Parent = parent end
+    return i
+end
+local function corner(p, r) return new("UICorner", {CornerRadius = UDim.new(0, r or 4)}, p) end
+local function stroke(p, c, t)
+    return new("UIStroke", {Color = c or C.Border, Thickness = t or 1,
+        ApplyStrokeMode = Enum.ApplyStrokeMode.Border}, p)
+end
+
+local function dragify(frame, handle)
+    handle = handle or frame
+    local dragging, startInput, startPos, dragInput
+    handle.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+            dragging   = true
+            startInput = input
+            startPos   = frame.Position
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then dragging = false end
+            end)
+        end
+    end)
+    handle.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement
+        or input.UserInputType == Enum.UserInputType.Touch then
+            dragInput = input
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if input == dragInput and dragging then
+            local d = input.Position - startInput.Position
+            frame.Position = UDim2.new(
+                startPos.X.Scale, startPos.X.Offset + d.X,
+                startPos.Y.Scale, startPos.Y.Offset + d.Y)
+        end
+    end)
+end
+
+-- Tooltip (basit)
+local tooltipFrame
+local function showTooltip(text, pos)
+    if not GuiLibrary.ToggleTooltips then return end
+    if not tooltipFrame then
+        tooltipFrame = new("TextLabel", {
+            BackgroundColor3 = C.BgDark, BorderSizePixel = 0,
+            Font = FONT, TextSize = 14, TextColor3 = C.TextDim,
+            Size = UDim2.new(0, 0, 0, 26),
+            ZIndex = 50, Visible = false,
+        }, GuiLibrary.MainGui.ScaledGui)
+        corner(tooltipFrame)
+        stroke(tooltipFrame)
+        new("UIPadding", {PaddingLeft = UDim.new(0, 8), PaddingRight = UDim.new(0, 8)}, tooltipFrame)
+    end
+    tooltipFrame.Text = text
+    tooltipFrame.Size = UDim2.new(0, #text * 8 + 20, 0, 26)
+    tooltipFrame.Position = UDim2.new(0, pos.X + 16, 0, pos.Y - 30)
+    tooltipFrame.Visible = true
+end
+local function hideTooltip() if tooltipFrame then tooltipFrame.Visible = false end end
+
+-- ████████████████████████████████████████████████████████████
+-- Ana GUI iskeleti
+-- ████████████████████████████████████████████████████████████
+local screen = new("ScreenGui", {
+    Name = "VapeGui", ResetOnSpawn = false,
+    ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+    IgnoreGuiInset = true,
+})
+local ok = pcall(function() screen.Parent = game:GetService("CoreGui") end)
+if not ok or not screen.Parent then screen.Parent = Players.LocalPlayer:WaitForChild("PlayerGui") end
+GuiLibrary.MainGui = screen
+
+local scaled = new("Frame", {
+    Name = "ScaledGui", BackgroundTransparency = 1,
+    Size = UDim2.new(1, 0, 1, 0),
+}, screen)
+GuiLibrary.MainGui.ScaledGui = scaled
+
+local clickGui = new("Frame", {
+    Name = "ClickGui", BackgroundTransparency = 1,
+    Size = UDim2.new(1, 0, 1, 0), Visible = false,
+}, scaled)
+GuiLibrary.MainGui.ScaledGui.ClickGui = clickGui
+
+-- API uyumu için boş frame
+GuiLibrary.MainGui.ScaledGui.OnlineProfiles = new("Frame", {
+    Name = "OnlineProfiles", BackgroundTransparency = 1,
+    Size = UDim2.new(1, 0, 1, 0), Visible = false,
+}, scaled)
+
+GuiLibrary.MainRescale = new("UIScale", {Scale = 1}, scaled)
+GuiLibrary.MainBlur    = new("BlurEffect", {Size = 0}, Lighting)
+
+-- ████████████████████████████████████████████████████████████
+-- Window (temel pencere sınıfı)
+-- ████████████████████████████████████████████████████████████
+local Window = {}
+Window.__index = Window
+
+function Window.new(name, opts)
+    local self = setmetatable({}, Window)
+    self.Name    = name
+    self.Options = opts or {}
+    self.Visible = false
+
+    local frame = new("Frame", {
+        Name = name .. "Window",
+        BackgroundColor3 = C.Bg,
+        BorderSizePixel  = 0,
+        Size             = UDim2.new(0, 217, 0, 100),
+        Position         = self.Options.Position or UDim2.new(0, 223, 0, 6),
+        Visible          = false,
+        ClipsDescendants = true,
+    }, clickGui)
+    corner(frame)
+    stroke(frame)
+    self.Frame = frame
+
+    local titleBar = new("Frame", {
+        Name = "TitleBar", BackgroundColor3 = C.Element,
+        BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 30),
+    }, frame)
+    corner(titleBar)
+    self.TitleBar = titleBar
+
+    if self.Options.Icon then
+        new("ImageLabel", {
+            BackgroundTransparency = 1,
+            Size = UDim2.new(0, self.Options.IconSize or 15, 0, self.Options.IconSize or 15),
+            Position = UDim2.new(0, 9, 0, (30 - (self.Options.IconSize or 15)) / 2),
+            Image = self.Options.Icon, ImageColor3 = C.Text,
+        }, titleBar)
+    end
+    new("TextLabel", {
+        BackgroundTransparency = 1,
+        Position = UDim2.new(0, self.Options.Icon and 31 or 10, 0, 0),
+        Size = UDim2.new(1, -40, 0, 30),
+        Font = FONT, TextSize = 17, TextColor3 = C.Text,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Text = name,
+    }, titleBar)
+
+    local content = new("ScrollingFrame", {
+        Name = "Content", BackgroundTransparency = 1,
+        BorderSizePixel = 0, Position = UDim2.new(0, 0, 0, 32),
+        Size = UDim2.new(1, 0, 1, -34),
+        CanvasSize = UDim2.new(0, 0, 0, 0),
+        ScrollBarThickness = 2, ScrollBarImageColor3 = C.Border,
+        ScrollingDirection = Enum.ScrollingDirection.Y,
+        AutomaticCanvasSize = Enum.AutomaticSize.Y,
+    }, frame)
+    local layout = new("UIListLayout", {
+        Padding = UDim.new(0, 3),
+        SortOrder = Enum.SortOrder.LayoutOrder,
+    }, content)
+    new("UIPadding", {
+        PaddingTop = UDim.new(0, 4), PaddingBottom = UDim.new(0, 4),
+    }, content)
+    self.Content = content
+
+    dragify(frame, titleBar)
+
+    GuiLibrary.ObjectsThatCanBeSaved[name .. "Window"] = {
+        Type = "Window", Object = frame, Api = self, SortOrder = #GuiLibrary.ObjectsThatCanBeSaved,
+    }
+    return self
+end
+
+function Window:SetVisible(v)
+    self.Visible = v
+    self.Frame.Visible = v
+    if v then
+        task.defer(function()
+            local h = self.Content.UIListLayout.AbsoluteContentSize.Y + 40
+            self.Frame.Size = UDim2.new(0, 217, 0, math.clamp(h, 39, 500))
+        end)
+    end
+    GuiLibrary.UpdateHudEvent:Fire()
+end
+
+-- Toggle
+function Window:CreateToggle(opts)
+    opts = opts or {}
+    local row = new("TextButton", {
+        Name = opts.Name .. "Toggle",
+        BackgroundColor3 = C.Element, AutoButtonColor = false,
+        Size = UDim2.new(1, -8, 0, 30),
+        Text = "",
+    }, self.Content)
+    new("UIPadding", {PaddingLeft = UDim.new(0, 8), PaddingRight = UDim.new(0, 8)}, row)
+    corner(row)
+
+    new("TextLabel", {
+        BackgroundTransparency = 1, Position = UDim2.new(0, 6, 0, 0),
+        Size = UDim2.new(1, -50, 1, 0),
+        Font = FONT, TextSize = 16, TextColor3 = C.Text,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Text = opts.Name or "Toggle",
+    }, row)
+
+    local bar = new("Frame", {
+        Name = "ToggleFrame1",
+        BackgroundColor3 = C.Disable, BorderSizePixel = 0,
+        AnchorPoint = Vector2.new(1, 0.5),
+        Position = UDim2.new(1, -6, 0.5, 0),
+        Size = UDim2.new(0, 36, 0, 18),
+    }, row)
+    corner(bar, 9)
+    local dot = new("Frame", {
+        BackgroundColor3 = C.Text, BorderSizePixel = 0,
+        Position = UDim2.new(0, 2, 0.5, 0),
+        AnchorPoint = Vector2.new(0, 0.5),
+        Size = UDim2.new(0, 14, 0, 14),
+    }, bar)
+    corner(dot, 7)
+
+    local api = {Enabled = opts.Default or false, Name = opts.Name, Object = row}
+    local function setState(state, fire)
+        api.Enabled = state
+        bar.BackgroundColor3 = state and C.Enable or C.Disable
+        TweenService:Create(dot, ANIM, {
+            Position = state and UDim2.new(1, -16, 0.5, 0) or UDim2.new(0, 2, 0.5, 0)
+        }):Play()
+        if fire and opts.Function then opts.Function(state) end
+        GuiLibrary.UpdateHudEvent:Fire()
+    end
+    setState(api.Enabled, false)
+
+    row.MouseButton1Click:Connect(function()
+        setState(not api.Enabled, true)
+        if GuiLibrary.ToggleNotifications and GuiLibrary.Notifications then
+            -- sessiz geç
+        end
+    end)
+    row.MouseEnter:Connect(function()
+        row.BackgroundColor3 = C.ElementHov
+        if opts.HoverText then showTooltip(opts.HoverText, row.AbsolutePosition + Vector2.new(row.AbsoluteSize.X/2, 0)) end
+    end)
+    row.MouseLeave:Connect(function()
+        row.BackgroundColor3 = C.Element
+        hideTooltip()
+    end)
+
+    GuiLibrary.ObjectsThatCanBeSaved[opts.Name] = {
+        Type = "Toggle", Object = row, Api = api, SortOrder = #GuiLibrary.ObjectsThatCanBeSaved,
+    }
+    return api
+end
+
+-- Slider
+function Window:CreateSlider(opts)
+    opts = opts or {}
+    local min, max = opts.Min or 0, opts.Max or 100
+    local value = opts.Default or min
+
+    local row = new("Frame", {
+        Name = opts.Name .. "Slider",
+        BackgroundColor3 = C.Element,
+        Size = UDim2.new(1, -8, 0, 42),
+    }, self.Content)
+    corner(row)
+
+    new("TextLabel", {
+        BackgroundTransparency = 1, Position = UDim2.new(0, 8, 0, 4),
+        Size = UDim2.new(1, -16, 0, 18),
+        Font = FONT, TextSize = 15, TextColor3 = C.Text,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Text = opts.Name or "Slider",
+    }, row)
+    local valText = new("TextLabel", {
+        BackgroundTransparency = 1, Position = UDim2.new(0, 8, 0, 4),
+        Size = UDim2.new(1, -16, 0, 18),
+        Font = FONT, TextSize = 15, TextColor3 = C.TextDim,
+        TextXAlignment = Enum.TextXAlignment.Right,
+        Text = tostring(value),
+    }, row)
+
+    local slider = new("Frame", {
+        Name = "Slider",
+        BackgroundColor3 = C.BgDark, BorderSizePixel = 0,
+        Position = UDim2.new(0, 8, 0, 28),
+        Size = UDim2.new(1, -16, 0, 6),
+    }, row)
+    corner(slider, 3)
+
+    local fill = new("Frame", {
+        Name = "FillSlider", BackgroundColor3 = C.Accent, BorderSizePixel = 0,
+        Size = UDim2.new((value - min) / (max - min), 0, 1, 0),
+    }, slider)
+    corner(fill, 3)
+
+    local knob = new("Frame", {
+        Name = "ButtonSlider", BackgroundColor3 = C.Text, BorderSizePixel = 0,
+        AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(1, 0, 0.5, 0),
+        Size = UDim2.new(0, 12, 0, 12),
+    }, fill)
+    corner(knob, 6)
+
+    local api = {Value = value, Name = opts.Name, Object = row}
+
+    local function setFromX(x)
+        local rel = math.clamp((x - slider.AbsolutePosition.X) / slider.AbsoluteSize.X, 0, 1)
+        local newVal = math.floor(min + (max - min) * rel + 0.5)
+        if newVal ~= api.Value then
+            api.Value = newVal
+            fill.Size = UDim2.new(rel, 0, 1, 0)
+            valText.Text = tostring(newVal)
+            if opts.Function then opts.Function(newVal) end
+        end
+    end
+
+    slider.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+            setFromX(input.Position.X)
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if (input.UserInputType == Enum.UserInputType.MouseMovement
+        or input.UserInputType == Enum.UserInputType.Touch)
+        and UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then
+            local mp = UserInputService:GetMouseLocation()
+            if mp.X >= slider.AbsolutePosition.X - 4
+            and mp.X <= slider.AbsolutePosition.X + slider.AbsoluteSize.X + 4
+            and mp.Y >= slider.AbsolutePosition.Y - 4
+            and mp.Y <= slider.AbsolutePosition.Y + slider.AbsoluteSize.Y + 4 then
+                setFromX(mp.X)
+            end
+        end
+    end)
+
+    GuiLibrary.ObjectsThatCanBeSaved[opts.Name] = {
+        Type = "Slider", Object = row, Api = api, SortOrder = #GuiLibrary.ObjectsThatCanBeSaved,
+    }
+    return api
+end
+
+-- Dropdown
+function Window:CreateDropdown(opts)
+    opts = opts or {}
+    local api = {Value = (opts.List and opts.List[1]) or "", Name = opts.Name}
+
+    local btn = new("TextButton", {
+        Name = opts.Name .. "Dropdown", BackgroundColor3 = C.Element,
+        AutoButtonColor = false, Size = UDim2.new(1, -8, 0, 30), Text = "",
+    }, self.Content)
+    corner(btn)
+
+    new("TextLabel", {
+        BackgroundTransparency = 1, Position = UDim2.new(0, 8, 0, 0),
+        Size = UDim2.new(1, -40, 1, 0),
+        Font = FONT, TextSize = 15, TextColor3 = C.Text,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Text = opts.Name or "Dropdown",
+    }, btn)
+    local valLabel = new("TextLabel", {
+        BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 0.5),
+        Position = UDim2.new(1, -12, 0.5, 0),
+        Size = UDim2.new(0, 90, 1, 0),
+        Font = FONT, TextSize = 15, TextColor3 = C.TextDim,
+        TextXAlignment = Enum.TextXAlignment.Right,
+        Text = api.Value,
+    }, btn)
+    new("TextLabel", {
+        BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 0.5),
+        Position = UDim2.new(1, -4, 0.5, 0),
+        Size = UDim2.new(0, 16, 1, 0),
+        Font = FONT, TextSize = 14, TextColor3 = C.TextMuted,
+        Text = "v",
+    }, btn)
+
+    local list = new("Frame", {
+        Name = "DropdownList", BackgroundColor3 = C.BgDark,
+        BorderSizePixel = 0, Position = UDim2.new(0, 0, 1, 2),
+        Size = UDim2.new(1, 0, 0, 0), Visible = false,
+        ZIndex = 10, ClipsDescendants = true,
+    }, btn)
+    corner(list)
+    local ll = new("UIListLayout", {Padding = UDim.new(0, 0),
+        SortOrder = Enum.SortOrder.LayoutOrder}, list)
+    new("UIPadding", {PaddingTop = UDim.new(0, 3), PaddingBottom = UDim.new(0, 3)}, list)
+
+    local function buildList()
+        for _, ch in ipairs(list:GetChildren()) do
+            if ch:IsA("TextButton") then ch:Destroy() end
+        end
+        for i, item in ipairs(opts.List or {}) do
+            local it = new("TextButton", {
+                BackgroundColor3 = C.BgDark, BorderSizePixel = 0,
+                AutoButtonColor = false, Size = UDim2.new(1, 0, 0, 24),
+                Text = item, Font = FONT, TextSize = 14,
+                TextColor3 = item == api.Value and C.Accent or C.Text,
+                TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 11,
+            }, list)
+            new("UIPadding", {PaddingLeft = UDim.new(0, 8)}, it)
+            it.MouseEnter:Connect(function() it.BackgroundColor3 = C.Element end)
+            it.MouseLeave:Connect(function() it.BackgroundColor3 = C.BgDark end)
+            it.MouseButton1Click:Connect(function()
+                api.Value = item
+                valLabel.Text = item
+                for _, c in ipairs(list:GetChildren()) do
+                    if c:IsA("TextButton") then
+                        c.TextColor3 = (c.Text == item) and C.Accent or C.Text
+                    end
+                end
+                list.Visible = false
+                if opts.Function then opts.Function(item) end
+            end)
+        end
+        list.Size = UDim2.new(1, 0, 0, 6 + #(opts.List or {}) * 24)
+    end
+    buildList()
+
+    btn.MouseButton1Click:Connect(function()
+        list.Visible = not list.Visible
+    end)
+
+    GuiLibrary.ObjectsThatCanBeSaved[opts.Name] = {
+        Type = "Dropdown", Object = btn, Api = api, SortOrder = #GuiLibrary.ObjectsThatCanBeSaved,
+    }
+    return api
+end
+
+-- TextBox
+function Window:CreateTextBox(opts)
+    opts = opts or {}
+    local api = {Value = "", Name = opts.Name}
+    local row = new("Frame", {
+        Name = opts.Name .. "TextBox", BackgroundColor3 = C.Element,
+        Size = UDim2.new(1, -8, 0, 30),
+    }, self.Content)
+    corner(row)
+    new("TextLabel", {
+        BackgroundTransparency = 1, Position = UDim2.new(0, 8, 0, 0),
+        Size = UDim2.new(1, -16, 1, 0),
+        Font = FONT, TextSize = 15, TextColor3 = C.TextDim,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Text = opts.Name or "Text",
+    }, row)
+    local box = new("TextBox", {
+        BackgroundTransparency = 1, Position = UDim2.new(0, 90, 0, 0),
+        Size = UDim2.new(1, -100, 1, 0),
+        Font = FONT, TextSize = 15, TextColor3 = C.Text,
+        TextXAlignment = Enum.TextXAlignment.Right,
+        Text = "", PlaceholderText = "...", ClearTextOnFocus = false,
+    }, row)
+    box.FocusLost:Connect(function(enter)
+        api.Value = box.Text
+        if opts.FocusLost then opts.FocusLost(enter) end
+    end)
+    api.Object = row
+    GuiLibrary.ObjectsThatCanBeSaved[opts.Name] = {
+        Type = "TextBox", Object = row, Api = api, SortOrder = #GuiLibrary.ObjectsThatCanBeSaved,
+    }
+    return api
+end
+
+-- Divider (basit çizgi)
+function Window:CreateDivider(label)
+    local row = new("Frame", {
+        Name = "Divider", BackgroundTransparency = 1,
+        Size = UDim2.new(1, -8, 0, label and 22 or 10),
+    }, self.Content)
+    if label then
+        new("TextLabel", {
+            BackgroundTransparency = 1,
+            Position = UDim2.new(0, 4, 0, 0), Size = UDim2.new(1, -8, 1, 0),
+            Font = FONT, TextSize = 14, TextColor3 = C.TextMuted,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            Text = label,
+        }, row)
+    else
+        new("Frame", {
+            BackgroundColor3 = C.Border, BorderSizePixel = 0,
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.new(0.5, 0, 0.5, 0),
+            Size = UDim2.new(1, -8, 0, 1),
+        }, row)
+    end
+end
+
+-- Divider2 → grup nesnesi (altına toggle/slider/buton koyar)
+function Window:CreateDivider2(label)
+    self:CreateDivider(label)
+    local group = {}
+    function group.CreateToggle(o) return self:CreateToggle(o) end
+    function group.CreateSlider(o) return self:CreateSlider(o) end
+    function group.CreateButton2(o)
+        local btn = new("TextButton", {
+            Name = o.Name, BackgroundColor3 = C.Element,
+            AutoButtonColor = false, Size = UDim2.new(1, -8, 0, 28),
+            Text = o.Name, Font = FONT, TextSize = 14,
+            TextColor3 = C.Text,
+        }, self.Content)
+        corner(btn)
+        btn.MouseEnter:Connect(function() btn.BackgroundColor3 = C.ElementHov end)
+        btn.MouseLeave:Connect(function() btn.BackgroundColor3 = C.Element end)
+        btn.MouseButton1Click:Connect(function() if o.Function then o.Function() end end)
+        return btn
+    end
+    function group.CreateColorSlider(o) return self:CreateColorSlider(o) end
+    return group
+end
+
+-- Renk slider (HSV)
+function Window:CreateColorSlider(opts)
+    if type(opts) == "string" then
+        opts = {Name = opts, Function = select(2, ...) or function() end}
+    end
+    local api = {Hue = 0.4, Sat = 0.9, Value = 1, RainbowValue = false, Name = opts.Name}
+
+    local row = new("Frame", {
+        Name = opts.Name .. "ColorSlider",
+        BackgroundColor3 = C.Element, Size = UDim2.new(1, -8, 0, 24),
+    }, self.Content)
+    corner(row)
+    new("TextLabel", {
+        BackgroundTransparency = 1, Position = UDim2.new(0, 8, 0, 0),
+        Size = UDim2.new(1, -40, 1, 0), Font = FONT, TextSize = 15,
+        TextColor3 = C.Text, TextXAlignment = Enum.TextXAlignment.Left,
+        Text = opts.Name or "Color",
+    }, row)
+    local preview = new("Frame", {
+        BackgroundColor3 = Color3.fromHSV(0.4, 0.9, 1), BorderSizePixel = 0,
+        AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -8, 0.5, 0),
+        Size = UDim2.new(0, 32, 0, 16),
+    }, row)
+    corner(preview)
+
+    -- Hue slider (satır genişliği)
+    local hueBar = new("Frame", {
+        BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0,
+        Position = UDim2.new(0, 8, 0, 26), Size = UDim2.new(1, -16, 0, 10),
+    }, row)
+    row.Size = UDim2.new(1, -8, 0, 44)
+    corner(hueBar, 3)
+    new("UIGradient", {
+        Color = ColorSequence.new{
+            ColorSequenceKeypoint.new(0.00, Color3.fromRGB(255,0,0)),
+            ColorSequenceKeypoint.new(0.17, Color3.fromRGB(255,255,0)),
+            ColorSequenceKeypoint.new(0.33, Color3.fromRGB(0,255,0)),
+            ColorSequenceKeypoint.new(0.50, Color3.fromRGB(0,255,255)),
+            ColorSequenceKeypoint.new(0.67, Color3.fromRGB(0,0,255)),
+            ColorSequenceKeypoint.new(0.83, Color3.fromRGB(255,0,255)),
+            ColorSequenceKeypoint.new(1.00, Color3.fromRGB(255,0,0)),
+        }
+    }, hueBar)
+    local hueKnob = new("Frame", {
+        BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0,
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.new(0.4, 0, 0.5, 0),
+        Size = UDim2.new(0, 4, 1, 0),
+    }, hueBar)
+
+    local function apply()
+        local col = Color3.fromHSV(api.Hue, api.Sat, api.Value)
+        preview.BackgroundColor3 = col
+        if opts.Function then opts.Function(api.Hue, api.Sat, api.Value) end
+    end
+
+    hueBar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            local rel = math.clamp((input.Position.X - hueBar.AbsolutePosition.X) / hueBar.AbsoluteSize.X, 0, 1)
+            api.Hue = rel
+            hueKnob.Position = UDim2.new(rel, 0, 0.5, 0)
+            apply()
+        end
+    end)
+
+    api.Object = row
+    GuiLibrary.ObjectsThatCanBeSaved[opts.Name] = {
+        Type = "ColorSlider", Object = row, Api = api, SortOrder = #GuiLibrary.ObjectsThatCanBeSaved,
+    }
+    -- uyumluluk için isim tahmini
+    GuiLibrary.ObjectsThatCanBeSaved["Gui ColorSliderColor"] = GuiLibrary.ObjectsThatCanBeSaved["Gui ColorSliderColor"] or {
+        Type = "ColorSlider", Object = row, Api = {Hue = 0.4, Sat = 0.9, Value = 1}
+    }
+    return api
+end
+
+-- GUIBind
+function Window:CreateGUIBind()
+    local api = {Key = "RightShift", Name = "GUIBind"}
+    local btn = new("TextButton", {
+        Name = "GUIBind", BackgroundColor3 = C.Element, AutoButtonColor = false,
+        Size = UDim2.new(1, -8, 0, 30), Text = "GUI Bind: " .. api.Key,
+        Font = FONT, TextSize = 15, TextColor3 = C.Text,
+    }, self.Content)
+    corner(btn)
+    btn.MouseButton1Click:Connect(function()
+        btn.Text = "Press a key..."
+        GuiLibrary.KeybindCaptured = true
+    end)
+    api.Reload = function()
+        btn.Text = "GUI Bind: " .. api.Key
+    end
+    api.SetKey = function(k)
+        api.Key = k
+        btn.Text = "GUI Bind: " .. k
+    end
+    return api
+end
+
+-- Basit text liste (Profiles için)
+function Window:CreateTextList(opts)
+    local api = {ObjectList = {}, ScrollingObject = self}
+    -- kukla liste (görsel)
+    local listFrame = new("ScrollingFrame", {
+        Name = "List", BackgroundTransparency = 1,
+        Size = UDim2.new(1, -8, 0, 120),
+        CanvasSize = UDim2.new(0, 0, 0, 0),
+        ScrollBarThickness = 2, ScrollBarImageColor3 = C.Border,
+    }, self.Content)
+    new("UIListLayout", {Padding = UDim.new(0, 2),
+        SortOrder = Enum.SortOrder.LayoutOrder}, listFrame)
+    api.ScrollingFrame = listFrame
+
+    function api.RefreshValues(list)
+        api.ObjectList = list or {}
+        for _, ch in ipairs(listFrame:GetChildren()) do
+            if ch:IsA("TextButton") then ch:Destroy() end
+        end
+        for i, name in ipairs(api.ObjectList) do
+            local btn = new("TextButton", {
+                BackgroundColor3 = C.Element, BorderSizePixel = 0,
+                AutoButtonColor = false, Size = UDim2.new(1, 0, 0, 24),
+                Text = name, Font = FONT, TextSize = 14,
+                TextColor3 = name == GuiLibrary.CurrentProfile and C.Accent or C.Text,
+                TextXAlignment = Enum.TextXAlignment.Left,
+            }, listFrame)
+            new("UIPadding", {PaddingLeft = UDim.new(0, 8)}, btn)
+            btn.MouseButton1Click:Connect(function()
+                if opts.CustomFunction then opts.CustomFunction(btn, name) end
+            end)
+        end
+        listFrame.CanvasSize = UDim2.new(0, 0, 0, #api.ObjectList * 26)
+    end
+    return api
+end
+
+-- Circle text list (Friends/Targets) - basit
+function Window:CreateCircleTextList(opts)
+    local api = {
+        ObjectList        = {},
+        ObjectListEnabled = {},
+        FriendRefresh     = Instance.new("BindableEvent"),
+        FriendColorRefresh= Instance.new("BindableEvent"),
+        ScrollingObject   = self,
+    }
+    api.Object = new("Frame", {BackgroundTransparency = 1, Size = UDim2.new(1, -8, 0, 80)}, self.Content)
+    local listFrame = new("ScrollingFrame", {
+        BackgroundTransparency = 1, Size = UDim2.new(1, 0, 1, 0),
+        CanvasSize = UDim2.new(0, 0, 0, 0),
+        ScrollBarThickness = 2, ScrollBarImageColor3 = C.Border,
+    }, api.Object)
+    new("UIListLayout", {Padding = UDim.new(0, 2),
+        SortOrder = Enum.SortOrder.LayoutOrder}, listFrame)
+    api.ScrollingFrame = listFrame
+    function api.RefreshValues(list)
+        api.ObjectList = list or {}
+        for _, ch in ipairs(listFrame:GetChildren()) do
+            if ch:IsA("TextButton") then ch:Destroy() end
+        end
+        for i, name in ipairs(api.ObjectList) do
+            local btn = new("TextButton", {
+                BackgroundColor3 = C.Element, BorderSizePixel = 0,
+                AutoButtonColor = false, Size = UDim2.new(1, 0, 0, 22),
+                Text = name, Font = FONT, TextSize = 14,
+                TextColor3 = C.Text, TextXAlignment = Enum.TextXAlignment.Left,
+            }, listFrame)
+            new("UIPadding", {PaddingLeft = UDim.new(0, 8)}, btn)
+            local dot = new("Frame", {
+                BackgroundColor3 = opts.Color or C.Enable, BorderSizePixel = 0,
+                AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -6, 0.5, 0),
+                Size = UDim2.new(0, 12, 0, 12), Name = "FriendCircle",
+            }, btn)
+            corner(dot, 6)
+            new("TextLabel", {
+                BackgroundTransparency = 1, Size = UDim2.new(1, -20, 1, 0),
+                Text = "", Name = "ItemText", TextColor3 = C.Text,
+            }, btn)
+        end
+        listFrame.CanvasSize = UDim2.new(0, 0, 0, #api.ObjectList * 24)
+    end
+    return api
+end
+
+-- ████████████████████████████████████████████████████████████
+-- Main window
+-- ████████████████████████████████████████████████████████████
+function GuiLibrary.CreateMainWindow()
+    local self = Window.new("Main", {Position = UDim2.new(0, 6, 0, 6)})
+    self.Frame.Visible = true
+    self.Visible = true
+    -- logo alanı
+    local titleBar = self.TitleBar
+    new("TextLabel", {
+        BackgroundTransparency = 1, Size = UDim2.new(1, -16, 1, 0),
+        Position = UDim2.new(0, 10, 0, 0), Font = FONT_BOLD,
+        TextSize = 18, TextColor3 = C.Text, TextXAlignment = Enum.TextXAlignment.Left,
+        Text = "Vape",
+    }, titleBar)
+    return self
+end
+
+function GuiLibrary.CreateWindow(opts)  return Window.new(opts.Name, opts) end
+function GuiLibrary.CreateWindow2(opts) return Window.new(opts.Name, opts) end
+function GuiLibrary.CreateCustomWindow(opts)
+    local w = Window.new(opts.Name, opts)
+    local customFrame = new("Frame", {
+        Name = "CustomChildren", BackgroundTransparency = 1,
+        Size = UDim2.new(1, 0, 1, 0), Position = UDim2.new(0, 0, 0, 0),
+    }, w.Frame)
+    w.GetCustomChildren = function() return customFrame end
+    w.CreateCircleWindow = function(o)
+        return {Object = new("Frame", {BackgroundTransparency = 1, Size = UDim2.new(1, -8, 0, 60)}, w.Content)}
+    end
+    return w
+end
+
+-- ████████████████████████████████████████████████████████████
+-- UpdateUI (tema rengi)
+-- ████████████████████████████████████████████████████████████
+GuiLibrary.UpdateUI = function(h, s, v, bypass)
+    pcall(function()
+        for _, obj in pairs(GuiLibrary.ObjectsThatCanBeSaved) do
+            local t = obj.Type
+            local o = obj.Object
+            if not o then continue end
+            if t == "Toggle" and obj.Api.Enabled and o:FindFirstChild("ToggleFrame1") then
+                o.ToggleFrame1.BackgroundColor3 = Color3.fromHSV(h, s, v)
+            elseif t == "Slider" and o:FindFirstChild("Slider") then
+                local sl = o.Slider
+                if sl:FindFirstChild("FillSlider") then
+                    sl.FillSlider.BackgroundColor3 = Color3.fromHSV(h, s, v)
+                    if sl.FillSlider:FindFirstChild("ButtonSlider") then
+                        sl.FillSlider.ButtonSlider.BackgroundColor3 = Color3.fromHSV(h, s, v)
+                    end
+                end
+            elseif t == "Button" and obj.Api.Enabled then
+                if o:FindFirstChild("ButtonText") then
+                    o.ButtonText.TextColor3 = Color3.fromHSV(h, s, v)
+                end
+            end
+        end
+    end)
+end
+
+-- ████████████████████████████████████████████████████████████
+-- Keybind handling (GUI aç/kapa)
+-- ████████████████████████████████████████████████████████████
+local GUIKey = Enum.KeyCode.RightShift
+UserInputService.InputBegan:Connect(function(input, gp)
+    if gp then return end
+    if GuiLibrary.KeybindCaptured then
+        GuiLibrary.KeybindCaptured = false
+        GuiLibrary.PressedKeybindKey = input.KeyCode.Name
+        return
+    end
+    if input.KeyCode == GUIKey then
+        local click = GuiLibrary.MainGui.ScaledGui.ClickGui
+        click.Visible = not click.Visible
+        GuiLibrary.MainBlur.Size = click.Visible and 25 or 0
+        GuiLibrary.MainGui.ScaledGui.OnlineProfiles.Visible = false
+    end
+end)
+
+-- ████████████████████████████████████████████████████████████
+-- SelfDestruct
+-- ████████████████████████████████████████████████████████████
+GuiLibrary.SelfDestruct = function()
+    GuiLibrary.SelfDestructEvent:Fire()
+    pcall(function() GuiLibrary.MainGui:Destroy() end)
+    pcall(function() GuiLibrary.MainBlur:Destroy() end)
+end
+
+-- ████████████████████████████████████████████████████████████
+-- Save / Load (basit)
+-- ████████████████████████████████████████████████████████████
+local function safeWrite(path, data)
+    if writefile then
+        pcall(function() writefile(path, data) end)
+    end
+end
+local function safeRead(path)
+    if readfile and isfile and isfile(path) then
+        local ok, data = pcall(readfile, path)
+        return ok and data or nil
+    end
+    return nil
+end
+
+GuiLibrary.SaveSettings = function()
+    local ok, encoded = pcall(function()
+        local t = {}
+        for _, obj in pairs(GuiLibrary.ObjectsThatCanBeSaved) do
+            if obj.Api and obj.Api.Enabled ~= nil then
+                t[obj.Api.Name or "x"] = obj.Api.Enabled
+            elseif obj.Api and obj.Api.Value ~= nil then
+                t[obj.Api.Name or "x"] = obj.Api.Value
+            end
+        end
+        return game:GetService("HttpService"):JSONEncode(t)
+    end)
+    if ok then safeWrite(GuiLibrary.BaseDirectory.."Profiles/"..GuiLibrary.CurrentProfile..".json", encoded) end
+end
+
+GuiLibrary.LoadSettings = function(profile)
+    GuiLibrary.CurrentProfile = profile or "default"
+    local data = safeRead(GuiLibrary.BaseDirectory.."Profiles/"..GuiLibrary.CurrentProfile..".json")
+    if not data then return end
+    local ok, decoded = pcall(function() return game:GetService("HttpService"):JSONDecode(data) end)
+    if not ok then return end
+    for _, obj in pairs(GuiLibrary.ObjectsThatCanBeSaved) do
+        local v = obj.Api and (obj.Api.Name and decoded[obj.Api.Name])
+        if v ~= nil then
+            if obj.Api.Enabled ~= nil then obj.Api.Enabled = v end
+        end
+    end
+end
+
+GuiLibrary.SwitchProfile = function(name)
+    GuiLibrary.SaveSettings()
+    GuiLibrary.CurrentProfile = name
+    GuiLibrary.LoadSettings(name)
+end
+
+-- ████████████████████████████████████████████████████████████
+-- Profil listesini başlat
+-- ████████████████████████████████████████████████████████████
+GuiLibrary.LoadedAnimation = function(showWelcome)
+    if showWelcome then
+        -- basit bilgi
+        local hint = new("TextLabel", {
+            BackgroundTransparency = 1,
+            Position = UDim2.new(0, 0, 1, -40),
+            Size = UDim2.new(1, 0, 0, 30),
+            Font = FONT, TextSize = 18, TextColor3 = C.Text,
+            Text = "Press RIGHTSHIFT to open GUI",
+        }, GuiLibrary.MainGui.ScaledGui.ClickGui)
+        task.delay(4, function() hint:Destroy() end)
+    end
+end
+
+return GuiLibrary
