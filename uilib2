@@ -1,30 +1,7 @@
---[[
-================================================================================
-    A U R O R
-    Modern, glassmorphic arayüz kütüphanesi (Roblox / Luau)
 
-    Özellikler:
-      • Blur'lu cam (glassmorphism) pencere, gölge katmanları, animasyonlu
-        aurora gradyan çerçeve
-      • Sürükleme + köşeden boyutlandırma + küçültme (yüzen orb)
-      • Sidebar sekmeleri, alt sekmeler (chip), canlı arama filtresi
-      • Toggle / Button / Slider / Dropdown (multi+arama) / Input /
-        Keybind / ColorPicker (HSV) / Label / Paragraph / Divider /
-        Space / Section
-      • Tam genişlik (FullWidth) kart desteği, responsive 1-3 sütun
-      • Mobil/küçük ekranlarda otomatik UIScale
-      • Toast bildirimleri (progress + hover'da duraklama)
-      • Config kaydet/yükle (JSON) + flag sistemi
-      • Tamamen Türkçe dokümantasyon
-
-    Kullanım:
-      local Library = loadstring(game:HttpGet(".../uilib"))()
-      local Window  = Library:CreateWindow("Flux City Panel")
-================================================================================
-]]
 
 local Library = {}
-Library.Version = "2.2.0"
+Library.Version = "2.2.1"
 
 --=============================================================================
 -- SERVİSLER
@@ -1087,14 +1064,26 @@ local function HeaderValue(headers, key)
 end
 
 -- Executor dosya API'leri: writefile/isfile/makefolder ... (Xeno, Synapse, Fluxus uyumu)
+local FUNCTION_ALIASES = {
+	getcustomasset = { "getcustomasset", "getsynasset", "getasset", "getcustomassetasync" },
+	writefile = { "writefile", "write_file" },
+	readfile = { "readfile", "read_file" },
+	isfile = { "isfile", "is_file" },
+	makefolder = { "makefolder", "make_folder", "createdir" },
+	getfilesize = { "getfilesize", "get_file_size" },
+}
+
 local function ExecutorFn(name)
-	local direct = rawget(_G, name)
-	if type(direct) == "function" then return direct end
-	local holders = { "syn", "fluxus", "krnl", "wave", "http" }
-	for index = 1, #holders do
-		local holder = rawget(_G, holders[index])
-		if type(holder) == "table" and type(holder[name]) == "function" then
-			return holder[name]
+	local names = FUNCTION_ALIASES[name] or { name }
+	local holders = { "syn", "fluxus", "krnl", "wave", "http", "SecureCall" }
+	for index = 1, #names do
+		local direct = rawget(_G, names[index])
+		if type(direct) == "function" then return direct end
+		for holderIndex = 1, #holders do
+			local holder = rawget(_G, holders[holderIndex])
+			if type(holder) == "table" and type(holder[names[index]]) == "function" then
+				return holder[names[index]]
+			end
 		end
 	end
 	return nil
@@ -1279,14 +1268,16 @@ function Library:UnpackEmbeddedFrames(progressCallback)
 
 	local writeFile = ExecutorFn("writefile")
 	local getCustomAsset = ExecutorFn("getcustomasset")
-	if not writeFile or not getCustomAsset then
-		return nil, "writefile/getcustomasset yok"
+	if not writeFile then
+		return nil, "writefile yok (executor dosya yazamıyor)"
+	end
+	if not getCustomAsset then
+		return nil, "getcustomasset yok (executor yerel görsel açamıyor)"
 	end
 
-	local dir = self.Options.IntroFramesFolder or "AuroraUI/frames"
-	EnsureFolder(dir .. "/x")
 	local isFile = ExecutorFn("isfile")
 	local getFileSize = ExecutorFn("getfilesize")
+	local baseDir = self.Options.IntroFramesFolder or "AuroraUI/frames"
 
 	local meta = {
 		fps = embedded.fps, cols = embedded.cols, rows = embedded.rows,
@@ -1295,31 +1286,68 @@ function Library:UnpackEmbeddedFrames(progressCallback)
 		atlas = embedded.atlas, assets = {},
 	}
 	local totalBytes = 0
+	-- klasör açılamazsa kök dizine yazmayı dene (Xeno / bazı executor'lar)
+	local dir = baseDir
+	local triedRoot = false
+
+	local function resolvePath(name)
+		return (dir == "" and name) or (dir .. "/" .. name)
+	end
+
+	local function ensureDir()
+		if dir == "" then return end
+		local okFolder = pcall(EnsureFolder, dir .. "/x")
+		if not okFolder then
+			dir = ""
+		end
+	end
 
 	for index = 1, embedded.atlas do
 		local encoded = embedded.data[index]
 		if encoded then
-			local path = string.format("%s/atlas_%02d.jpg", dir, index)
+			local name = string.format("atlas_%02d.jpg", index)
+			local path = resolvePath(name)
 			local exists = false
 			if isFile and getFileSize then
 				local okFile, present = pcall(isFile, path)
 				if okFile and present then
 					local okSize, size = pcall(getFileSize, path)
-					-- gömülü atlas ~100 KB; diskteki dosya makul boyuttaysa tekrar yazma
 					exists = okSize and type(size) == "number" and size > 4096
 				end
 			end
+
 			if not exists then
 				local bytes = Base64Decode(encoded)
 				local okWrite, writeErr = pcall(writeFile, path, bytes)
+				if not okWrite and not triedRoot then
+					-- klasör yok / izin yok: kök dizine yaz
+					triedRoot = true
+					dir = ""
+					path = resolvePath(name)
+					okWrite, writeErr = pcall(writeFile, path, bytes)
+				end
 				if not okWrite then
-					return nil, string.format("atlas_%02d yazılamadı: %s", index, tostring(writeErr))
+					return nil, string.format("%s yazılamadı: %s", name, tostring(writeErr))
 				end
 				totalBytes = totalBytes + #bytes
 			end
+
 			local okAsset, asset = pcall(getCustomAsset, path)
+			if (not okAsset or type(asset) ~= "string" or asset == "") and dir ~= "" then
+				-- bir de kök dizindeki kopyayı dene
+				local rootPath = name
+				if isFile then
+					local okRoot, hasRoot = pcall(isFile, rootPath)
+					if okRoot and hasRoot then
+						local okAsset2, asset2 = pcall(getCustomAsset, rootPath)
+						if okAsset2 and type(asset2) == "string" and asset2 ~= "" then
+							okAsset, asset = true, asset2
+						end
+					end
+				end
+			end
 			if not okAsset or type(asset) ~= "string" or asset == "" then
-				return nil, string.format("atlas_%02d getcustomasset başarısız", index)
+				return nil, string.format("%s getcustomasset başarısız (%s)", name, tostring(asset))
 			end
 			meta.assets[index] = asset
 		end
@@ -1328,6 +1356,7 @@ function Library:UnpackEmbeddedFrames(progressCallback)
 		end
 	end
 
+	meta.dir = dir
 	meta.bytes = totalBytes
 	self._embeddedFrames = meta
 	if not self._introFrames then self._introFrames = meta end
@@ -2534,10 +2563,15 @@ function Library:PlayLoadingScreen(onFinish)
 				-- bu executor yerel videoyu oynatamıyor: sonraki açılışta boşuna denemeyelim
 				Library._videoUnsupported = true
 			end
+			local frameErr = Library._introFramesError
+			local detail = message
+			if frameErr then
+				detail = message .. "  |  kare hatası: " .. tostring(frameErr)
+			end
 			if statusLabel then statusLabel.Text = message end
 			pcall(function()
-				print("[AuroraUI] " .. tostring(message) .. "  •  intro.mp4 oynatılamadı. "
-					.. "Aurora moduna geçildi. (Detay: Library:IntroDiagnostics())")
+				print("[AuroraUI] " .. tostring(detail))
+				print("[AuroraUI] Detay için: Library:IntroDiagnostics()")
 			end)
 			pcall(function() if video then video.Visible = false end end)
 			if fallback then
@@ -2795,6 +2829,10 @@ function Library:PlayLoadingScreen(onFinish)
 			end
 		end
 
+		if not source and Library._introFramesError then
+			downloadScreen:SetStatus("Kareler açılamadı  •  " .. tostring(Library._introFramesError))
+		end
+
 		-- 2) Gömülü yoksa: GitHub'dan atlas indir
 		if not source and type(self.Options.IntroFramesUrl) == "string" and self.Options.IntroFramesUrl ~= "" then
 			downloadScreen:SetStatus("Kareler indiriliyor...")
@@ -2888,6 +2926,11 @@ function Library:IntroDiagnostics()
 		asset = self._introVideoAsset,
 		error = self._introVideoError,
 		videoUnsupported = self._videoUnsupported == true,
+		embeddedAtlases = (Library._EmbeddedFrames and Library._EmbeddedFrames.atlas) or 0,
+		framesOk = self._embeddedFrames ~= nil,
+		framesDir = self._embeddedFrames and self._embeddedFrames.dir or nil,
+		framesError = self._introFramesError,
+		frameSource = self._loading and self._loading.frameSource or nil,
 	}
 end
 
@@ -4230,6 +4273,26 @@ function Library:CreateWindow(config)
 			Library:_relayoutAll()
 			runWindowIntro()
 		end)
+		-- GÜVENCE: intro ne yaparsa yapsın, 20 s sonra panel açık olsun
+		task.delay(20, function()
+			if windowObject._destroyed then return end
+			if screenGui.Enabled then return end
+			local loading = Library._loading
+			if loading and not (loading.finished or loading.cancelled) then
+				if loading.phase == "download" or loading.phase == "video" or loading.phase == "fallback" then
+					pcall(function() Library:SkipLoadingScreen() end)
+				end
+				task.delay(8, function()
+					if windowObject._destroyed or screenGui.Enabled then return end
+					screenGui.Enabled = true
+					pcall(function() Library:_relayoutAll() end)
+				end)
+			else
+				screenGui.Enabled = true
+				pcall(function() Library:_relayoutAll() end)
+			end
+		end)
+
 		if okLoading then
 			windowObject._loading = loadingObject
 		else
