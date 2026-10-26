@@ -1,6 +1,6 @@
 --[[
 ================================================================================
-    A U R O R A   U I   •   v2.0
+    A U R O R A   U I   •   v2.03
     Modern, glassmorphic arayüz kütüphanesi (Roblox / Luau)
 
     Özellikler:
@@ -24,7 +24,7 @@
 ]]
 
 local Library = {}
-Library.Version = "2.1.0"
+Library.Version = "2.1.1"
 
 --=============================================================================
 -- SERVİSLER
@@ -86,6 +86,38 @@ Library.Theme = {
 }
 
 --=============================================================================
+-- GÜVENLİ ENUM ÇÖZÜMLEYİCİ
+-- Eski Roblox sürümlerinde / kısıtlı executor'larda bulunmayan enum değerleri
+-- yüzünden script çökmesin diye tüm enumlar kontrollü okunur.
+--=============================================================================
+local function ResolveEnum(enumName, itemName, fallback)
+	local okEnum, enumType = pcall(function() return Enum[enumName] end)
+	if okEnum and enumType then
+		local okItem, item = pcall(function() return enumType[itemName] end)
+		if okItem and item ~= nil then
+			return item
+		end
+	end
+	return fallback
+end
+
+local EASE = {
+	Linear = ResolveEnum("EasingStyle", "Linear"),
+	Sine   = ResolveEnum("EasingStyle", "Sine", ResolveEnum("EasingStyle", "Linear")),
+	Quad   = ResolveEnum("EasingStyle", "Quad", ResolveEnum("EasingStyle", "Linear")),
+	Quint  = ResolveEnum("EasingStyle", "Quint", ResolveEnum("EasingStyle", "Quad", ResolveEnum("EasingStyle", "Linear"))),
+	Back   = ResolveEnum("EasingStyle", "Back", ResolveEnum("EasingStyle", "Quad", ResolveEnum("EasingStyle", "Linear"))),
+	-- "Expo" DİYE BİR DEĞER YOK; doğrusu "Exponential". Yoksa Quint'e düşer.
+	Snappy = ResolveEnum("EasingStyle", "Exponential",
+		ResolveEnum("EasingStyle", "Quint", ResolveEnum("EasingStyle", "Quad", ResolveEnum("EasingStyle", "Linear")))),
+}
+local DIR = {
+	In    = ResolveEnum("EasingDirection", "In"),
+	Out   = ResolveEnum("EasingDirection", "Out"),
+	InOut = ResolveEnum("EasingDirection", "InOut"),
+}
+
+--=============================================================================
 -- AYARLAR
 --=============================================================================
 Library.Options = {
@@ -93,10 +125,16 @@ Library.Options = {
 
 	-- Sinematik yükleme ekranı
 	LoadingScreen = true,                   -- panelden önce tam ekran intro
+	DownloadScreen = true,                  -- önce videosuz "indiriliyor" ekranı
 	LoadingSpeed  = 1,                      -- 1 = normal, 2 = iki kat hızlı
-	IntroVideo    = "",                     -- hazır rbxassetid varsa buraya yaz
+	IntroVideo    = "",                     -- hazır rbxassetid varsa indirmeyi atlar
 	IntroVideoUrl = "https://github.com/Costy432/aurorac/raw/refs/heads/main/Edit%5D%204K.mp4",
 	IntroVideoFile = "AuroraUI/intro.mp4",  -- executor workspace'ine indirilen dosya
+	IntroVideoChunkSize = 512 * 1024,       -- parçalı indirme boyutu (gerçek % için)
+	IntroVideoDuration = 19.28,             -- TimeLength okunamazsa kullanılan süre
+	IntroVideoVolume = 0.35,                -- video ses seviyesi (0 = sessiz)
+	VideoLoadTimeout = 8,                   -- video bu sürede yüklenmezse arayüz modu
+	SequenceLead = 6.2,                     -- yazı sekansı videonun son kaç saniyesinde başlar
 	LoadingTexts = {                        -- intro yazıları (istediğin gibi değiştir)
 		Best = "BEST",
 		Universal = "UNIVERSAL",
@@ -235,7 +273,7 @@ end
 
 local function Tween(inst, props, time, style, dir)
 	if not inst then return nil end
-	local info = TweenInfo.new(time or 0.18, style or Enum.EasingStyle.Quint, dir or Enum.EasingDirection.Out)
+	local info = TweenInfo.new(time or 0.18, style or EASE.Quint, dir or DIR.Out)
 	local ok, tw = pcall(function() return TweenService:Create(inst, info, props) end)
 	if ok and tw then
 		tw:Play()
@@ -551,7 +589,7 @@ local function Ripple(button)
 	Tween(circle, {
 		Size = UDim2.fromOffset(size * 1.7, size * 1.7),
 		BackgroundTransparency = 1,
-	}, 0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+	}, 0.5, EASE.Quad, DIR.Out)
 	task.delay(0.55, function()
 		if circle then circle:Destroy() end
 	end)
@@ -564,7 +602,7 @@ local function HideTooltip()
 	local tooltip = Library._tooltip
 	if not tooltip then return end
 	Library._tooltip = nil
-	Tween(tooltip, { GroupTransparency = 1 }, 0.16, Enum.EasingStyle.Quad)
+	Tween(tooltip, { GroupTransparency = 1 }, 0.16, EASE.Quad)
 	task.delay(0.2, function()
 		if tooltip then tooltip:Destroy() end
 	end)
@@ -614,7 +652,7 @@ local function ShowTooltip(anchor, text)
 	})
 
 	Library._tooltip = group
-	Tween(group, { GroupTransparency = 0 }, 0.18, Enum.EasingStyle.Quad)
+	Tween(group, { GroupTransparency = 0 }, 0.18, EASE.Quad)
 end
 
 --=============================================================================
@@ -643,7 +681,7 @@ local function RecalcNotifications()
 	for _, item in ipairs(Library._notifications) do
 		if item.toast and item.toast.Parent then
 			item._targetY = y
-			Tween(item.toast, { Position = UDim2.fromOffset(0, y) }, 0.28, Enum.EasingStyle.Quint)
+			Tween(item.toast, { Position = UDim2.fromOffset(0, y) }, 0.28, EASE.Quint)
 			y = y + item.height + 8
 		end
 	end
@@ -660,8 +698,8 @@ local function RemoveNotification(item, instant)
 	end
 	if item.toast then
 		local targetY = item.toast.Position.Y.Offset
-		Tween(item.toast, { GroupTransparency = 1 }, instant and 0.01 or 0.22, Enum.EasingStyle.Quad)
-		Tween(item.toast, { Position = UDim2.fromOffset(48, targetY) }, instant and 0.01 or 0.22, Enum.EasingStyle.Quad)
+		Tween(item.toast, { GroupTransparency = 1 }, instant and 0.01 or 0.22, EASE.Quad)
+		Tween(item.toast, { Position = UDim2.fromOffset(48, targetY) }, instant and 0.01 or 0.22, EASE.Quad)
 		local toast = item.toast
 		task.delay(instant and 0.02 or 0.26, function()
 			if toast then toast:Destroy() end
@@ -812,12 +850,12 @@ function Library:Notify(options)
 
 	if item._targetY then
 		toast.Position = UDim2.fromOffset(42, item._targetY)
-		Tween(toast, { Position = UDim2.fromOffset(0, item._targetY) }, 0.32, Enum.EasingStyle.Quint)
+		Tween(toast, { Position = UDim2.fromOffset(0, item._targetY) }, 0.32, EASE.Quint)
 	end
 
-	Tween(toast, { GroupTransparency = 0 }, 0.25, Enum.EasingStyle.Quad)
+	Tween(toast, { GroupTransparency = 0 }, 0.25, EASE.Quad)
 
-	local progressTween = Tween(progress, { Size = UDim2.fromScale(0, 1) }, math.max(duration, 0.8), Enum.EasingStyle.Linear)
+	local progressTween = Tween(progress, { Size = UDim2.fromScale(0, 1) }, math.max(duration, 0.8), EASE.Linear)
 	if progressTween then
 		progressTween.Completed:Connect(function()
 			RemoveNotification(item, false)
@@ -943,8 +981,14 @@ local CardAddLabel, CardAddParagraph, CardAddDivider, CardAddSpace
 local CardAddSection
 
 --=============================================================================
--- SİNEMATİK YÜKLEME EKRANI  (video + BEST / UNIVERSAL SCRIPT + patlama)
+-- SİNEMATİK YÜKLEME SİSTEMİ
+--   1) VİDEOSUZ "İNDİRİLİYOR" EKRANI (gerçek byte ilerlemesi)
+--   2) TAM EKRAN VİDEO (baştan sona, kırpılmadan)
+--   3) BEST → ekran bölünür → UNIVERSAL + SCRIPT → patlama → panel
 --=============================================================================
+
+local MIN_VIDEO_BYTES = 4096
+local DEFAULT_VIDEO_DURATION = 19.28
 
 local function SpacedText(text, gap)
 	if text == nil then return "" end
@@ -976,32 +1020,182 @@ local function PickGuiParent()
 	return nil
 end
 
-local function HttpGetRaw(url)
+-- Executor uyumlu HTTP isteği (header destekleyenleri önce dener)
+local function RequestRaw(url, headers)
 	if type(url) ~= "string" or url == "" then return nil end
 
+	local candidates = {}
 	if syn and type(syn.request) == "function" then
-		local ok, response = pcall(syn.request, { Url = url, Method = "GET" })
-		if ok and type(response) == "table" and type(response.Body) == "string" then
-			return response.Body
+		table.insert(candidates, function(opts) return syn.request(opts) end)
+	end
+	if http and type(http.request) == "function" then
+		table.insert(candidates, function(opts) return http.request(opts) end)
+	end
+	if type(http_request) == "function" then
+		table.insert(candidates, function(opts) return http_request(opts) end)
+	end
+	if type(request) == "function" then
+		table.insert(candidates, function(opts) return request(opts) end)
+	end
+
+	for _, fetch in ipairs(candidates) do
+		local ok, response = pcall(fetch, {
+			Url = url,
+			Method = "GET",
+			Headers = headers or {},
+		})
+		if ok and type(response) == "table" and type(response.Body) == "string" and #response.Body > 0 then
+			return {
+				Body = response.Body,
+				Headers = response.Headers or response.headers or {},
+				StatusCode = response.StatusCode or response.StatusCode,
+			}
 		end
 	end
-	for _, name in ipairs({ "http_request", "request" }) do
-		local fetch = rawget(_G, name)
-		if type(fetch) == "function" then
-			local ok, response = pcall(fetch, { Url = url, Method = "GET" })
-			if ok and type(response) == "table" and type(response.Body) == "string" then
-				return response.Body
-			end
+
+	-- Header gerekmeyen tek parça indirme (Range yoksa)
+	if not headers or next(headers) == nil then
+		local ok, body = pcall(function() return game:HttpGet(url, true) end)
+		if ok and type(body) == "string" and #body > 0 then
+			return { Body = body, Headers = {}, StatusCode = 200 }
 		end
 	end
-	local ok, body = pcall(function() return game:HttpGet(url, true) end)
-	if ok and type(body) == "string" then return body end
 	return nil
 end
 
---- Giriş videosunu (varsa) indirir ve önbelleğe alır.
--- Öncelik: Library.Options.IntroVideo (rbxassetid) -> yerel dosya + getcustomasset
-function Library:_resolveIntroVideo()
+local function HeaderValue(headers, key)
+	if type(headers) ~= "table" then return nil end
+	local wanted = string.lower(key)
+	for name, value in pairs(headers) do
+		if string.lower(tostring(name)) == wanted then
+			return tostring(value)
+		end
+	end
+	return nil
+end
+
+local function FolderExists(path)
+	if type(isfolder) ~= "function" then return false end
+	local ok, exists = pcall(isfolder, path)
+	return ok and exists == true
+end
+
+local function EnsureFolder(filePath)
+	if type(makefolder) ~= "function" then return end
+	local folder = string.match(filePath, "^(.*)/[^/]+$")
+	if not folder or folder == "" then return end
+	if FolderExists(folder) then return end
+	-- iç içe klasörleri sırayla oluştur
+	local built = ""
+	for part in string.gmatch(folder, "[^/]+") do
+		built = (built == "") and part or (built .. "/" .. part)
+		if not FolderExists(built) then
+			pcall(makefolder, built)
+		end
+	end
+end
+
+--- Videoyu executor'ın workspace'ine indirir.
+-- @return ok:boolean, pathOrError:string, bytes:number
+function Library:DownloadIntroVideo(progressCallback)
+	local path = self.Options.IntroVideoFile or "AuroraUI/intro.mp4"
+	local url = self.Options.IntroVideoUrl
+
+	if type(isfile) == "function" then
+		local okFile, exists = pcall(isfile, path)
+		if okFile and exists then
+			local size = 0
+			if type(getfilesize) == "function" then
+				local okSize, result = pcall(getfilesize, path)
+				if okSize and type(result) == "number" then size = result end
+			end
+			if size >= MIN_VIDEO_BYTES or (size == 0 and type(getfilesize) ~= "function") then
+				if progressCallback then progressCallback(-1, -1, "cached") end
+				return true, path, size
+			end
+		end
+	end
+
+	if type(url) ~= "string" or url == "" then
+		return false, "IntroVideoUrl boş"
+	end
+	if type(writefile) ~= "function" then
+		return false, "Executor writefile desteklemiyor"
+	end
+
+	local chunkSize = tonumber(self.Options.IntroVideoChunkSize) or (512 * 1024)
+	if chunkSize < 65536 then chunkSize = 65536 end
+
+	local totalBytes = nil
+	local chunks = {}
+	local downloaded = 0
+	local useRange = true
+
+	-- 1) Parça parça indirme (gerçek ilerleme yüzdesi)
+	while useRange do
+		local from = downloaded
+		local to = downloaded + chunkSize - 1
+		local response = RequestRaw(url, { ["Range"] = string.format("bytes=%d-%d", from, to) })
+		if not response then
+			useRange = false
+			break
+		end
+
+		local contentRange = HeaderValue(response.Headers, "content-range")
+		if contentRange then
+			local total = string.match(contentRange, "/(%d+)")
+			if total then totalBytes = tonumber(total) end
+		elseif downloaded == 0 then
+			local contentLength = HeaderValue(response.Headers, "content-length")
+			if contentLength then totalBytes = tonumber(contentLength) end
+		end
+
+		table.insert(chunks, response.Body)
+		downloaded = downloaded + #response.Body
+
+		if progressCallback then
+			progressCallback(downloaded, totalBytes, "download")
+		end
+
+		if #response.Body < chunkSize then
+			break
+		end
+		if totalBytes and downloaded >= totalBytes then
+			break
+		end
+		if #chunks > 128 then
+			break
+		end
+	end
+
+	local body = (#chunks > 0) and table.concat(chunks) or nil
+
+	-- 2) Tek parça indirme (Range desteklenmiyorsa)
+	if not body or #body < MIN_VIDEO_BYTES then
+		if progressCallback then progressCallback(0, nil, "download-start") end
+		local response = RequestRaw(url)
+		if response and #response.Body >= MIN_VIDEO_BYTES then
+			body = response.Body
+			if progressCallback then progressCallback(#body, #body, "download") end
+		else
+			return false, "Video indirilemedi (ağ / executor engeli)"
+		end
+	end
+
+	EnsureFolder(path)
+
+	if progressCallback then progressCallback(#body, #body, "write") end
+	local written, writeErr = pcall(writefile, path, body)
+	if not written then
+		return false, "Dosya yazılamadı: " .. tostring(writeErr)
+	end
+
+	self._introVideoBytes = #body
+	return true, path, #body
+end
+
+--- Varsa hazır asset'i, yoksa indirip getcustomasset ile asset'e çevirir.
+function Library:_resolveIntroVideo(progressCallback)
 	local preset = self.Options.IntroVideo
 	if type(preset) == "string" and preset ~= "" then
 		return preset
@@ -1009,53 +1203,33 @@ function Library:_resolveIntroVideo()
 	if self._introVideoAsset ~= nil then
 		return self._introVideoAsset or nil
 	end
-	self._introVideoAsset = false
 
 	if type(getcustomasset) ~= "function" then
+		self._introVideoAsset = false
 		return nil
 	end
 
-	local path = self.Options.IntroVideoFile or "AuroraUI/intro.mp4"
-	local exists = false
-	if type(isfile) == "function" then
-		local ok, result = pcall(isfile, path)
-		exists = ok and result == true
+	local okDownload, pathOrError = self:DownloadIntroVideo(progressCallback)
+	if not okDownload then
+		self._introVideoAsset = false
+		self._introVideoError = tostring(pathOrError)
+		return nil
 	end
 
-	if not exists then
-		local url = self.Options.IntroVideoUrl
-		if type(url) ~= "string" or url == "" or type(writefile) ~= "function" then
-			return nil
-		end
-		local body = HttpGetRaw(url)
-		if type(body) ~= "string" or #body < 1024 then
-			return nil
-		end
-
-		local folder = string.match(path, "^(.*)/[^/]+$")
-		if folder and type(isfolder) == "function" then
-			local okFolder, folderExists = pcall(isfolder, folder)
-			if okFolder and not folderExists and type(makefolder) == "function" then
-				pcall(makefolder, folder)
-			end
-		end
-
-		local written = pcall(writefile, path, body)
-		if not written then
-			return nil
-		end
-		self._introVideoBytes = #body
-	end
-
-	local okAsset, asset = pcall(getcustomasset, path)
+	local okAsset, asset = pcall(getcustomasset, pathOrError)
 	if okAsset and type(asset) == "string" and asset ~= "" then
 		self._introVideoAsset = asset
 		return asset
 	end
+
+	self._introVideoAsset = false
+	self._introVideoError = "getcustomasset başarısız"
 	return nil
 end
 
---- Sinematik yazı katmanı (ana + glow + kromatik kayma)
+--=============================================================================
+-- ORTAK GÖRSEL PARÇALAR
+--=============================================================================
 local function BuildCinematicText(parent, text, fontSize, zIndex)
 	local group = New("Frame", {
 		Name = "Text_" .. tostring(text),
@@ -1064,9 +1238,7 @@ local function BuildCinematicText(parent, text, fontSize, zIndex)
 		ZIndex = zIndex or 20,
 		Parent = parent,
 	})
-
 	local scale = New("UIScale", { Scale = 1, Parent = group })
-
 	local layers = {}
 
 	local function layer(color, transparency, dx, dy, strokeColor, strokeTransparency, strokeThickness, zOffset)
@@ -1097,13 +1269,10 @@ local function BuildCinematicText(parent, text, fontSize, zIndex)
 		return label
 	end
 
-	-- kromatik kayma (arkada)
 	local chromaRed = layer(Color3.fromRGB(255, 70, 110), 0.78, -3, 0, nil, nil, nil, 0)
 	local chromaCyan = layer(Color3.fromRGB(70, 220, 255), 0.78, 3, 0, nil, nil, nil, 0)
-	-- glow
 	local glow = layer(Color3.fromRGB(255, 255, 255), 0.72, 0, 0,
 		Library.Theme.Accent, 0.45, 6, 1)
-	-- ana
 	local main = layer(Color3.fromRGB(255, 255, 255), 0, 0, 0,
 		Color3.fromRGB(0, 0, 0), 0.5, 2, 2)
 
@@ -1123,8 +1292,36 @@ local function BuildCinematicText(parent, text, fontSize, zIndex)
 	}
 end
 
---- Arka plan (video yoksa çalışan animasyonlu aurora)
-local function BuildLoadingBackdrop(parent)
+local function HideTextGroup(textGroup)
+	for _, label in ipairs(textGroup.layers) do
+		label.TextTransparency = 1
+		for _, child in ipairs(label:GetChildren()) do
+			if child:IsA("UIStroke") then child.Transparency = 1 end
+		end
+	end
+end
+
+local function FadeTextGroup(textGroup, targetAlpha, duration, easing)
+	for _, label in ipairs(textGroup.layers) do
+		local baseAlpha = 1
+		if label == textGroup.chromaRed or label == textGroup.chromaCyan then
+			baseAlpha = 0.22
+		elseif label == textGroup.glow then
+			baseAlpha = 0.28
+		elseif label == textGroup.main then
+			baseAlpha = 0
+		end
+		Tween(label, { TextTransparency = Clamp(targetAlpha + baseAlpha, 0, 1) }, duration or 0.3, easing)
+		for _, child in ipairs(label:GetChildren()) do
+			if child:IsA("UIStroke") then
+				local strokeBase = (label == textGroup.glow) and 0.45 or 0.5
+				Tween(child, { Transparency = Clamp(targetAlpha + strokeBase, 0, 1) }, duration or 0.3, easing)
+			end
+		end
+	end
+end
+
+local function BuildAuroraBackdrop(parent)
 	local theme = Library.Theme
 	local backdrop = New("CanvasGroup", {
 		Name = "Backdrop",
@@ -1134,7 +1331,7 @@ local function BuildLoadingBackdrop(parent)
 		Parent = parent,
 	})
 
-	local base = New("Frame", {
+	New("Frame", {
 		Size = UDim2.fromScale(1, 1),
 		BackgroundColor3 = Color3.fromRGB(6, 8, 12),
 		BorderSizePixel = 0,
@@ -1142,16 +1339,16 @@ local function BuildLoadingBackdrop(parent)
 	})
 
 	local blobConfig = {
-		{ color = Color3.fromRGB(120, 60, 255), size = 0.75, x = -0.1, y = -0.15, transparency = 0.55 },
-		{ color = Color3.fromRGB(0, 180, 220), size = 0.85, x = 0.65, y = 0.55, transparency = 0.6 },
-		{ color = Color3.fromRGB(80, 40, 180), size = 0.6, x = 0.45, y = -0.2, transparency = 0.68 },
+		{ color = Color3.fromRGB(120, 60, 255), size = 0.75, x = 0.12, y = 0.15, transparency = 0.55 },
+		{ color = Color3.fromRGB(0, 180, 220), size = 0.85, x = 0.82, y = 0.78, transparency = 0.6 },
+		{ color = Color3.fromRGB(80, 40, 180), size = 0.6, x = 0.62, y = 0.2, transparency = 0.68 },
 	}
 
 	for index, config in ipairs(blobConfig) do
 		local blob = New("Frame", {
 			Name = "Blob" .. index,
 			AnchorPoint = Vector2.new(0.5, 0.5),
-			Position = UDim2.fromScale(config.x + 0.2, config.y + 0.3),
+			Position = UDim2.fromScale(config.x, config.y),
 			Size = UDim2.fromScale(config.size, config.size),
 			BackgroundColor3 = config.color,
 			BackgroundTransparency = config.transparency,
@@ -1168,58 +1365,30 @@ local function BuildLoadingBackdrop(parent)
 			}),
 			Parent = blob,
 		})
-		New("UIStroke", {
-			Color = config.color,
-			Transparency = 0.85,
-			Thickness = 40,
-			Parent = blob,
-		})
+		New("UIStroke", { Color = config.color, Transparency = 0.85, Thickness = 40, Parent = blob })
 
-		local drift = TweenInfo.new(6 + index * 2, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true)
+		local drift = TweenInfo.new(6 + index * 2, EASE.Sine, DIR.InOut, -1, true)
 		pcall(function()
 			TweenService:Create(blob, drift, {
-				Position = UDim2.fromScale(config.x + 0.35, config.y + 0.15),
+				Position = UDim2.fromScale(config.x + 0.12, config.y - 0.06),
 				Size = UDim2.fromScale(config.size * 1.15, config.size * 1.15),
 			}):Play()
 		end)
 	end
 
-	-- ince ızgara
-	for index = 0, 16 do
-		New("Frame", {
-			Position = UDim2.fromScale(index / 16, 0),
-			Size = UDim2.new(0, 1, 1, 0),
-			BackgroundColor3 = Color3.fromRGB(255, 255, 255),
-			BackgroundTransparency = 0.955,
-			BorderSizePixel = 0,
-			Parent = backdrop,
-		})
-	end
-	for index = 0, 9 do
-		New("Frame", {
-			Position = UDim2.fromScale(0, index / 9),
-			Size = UDim2.new(1, 0, 0, 1),
-			BackgroundColor3 = Color3.fromRGB(255, 255, 255),
-			BackgroundTransparency = 0.965,
-			BorderSizePixel = 0,
-			Parent = backdrop,
-		})
-	end
-
-	-- yüzen parçacıklar
-	for index = 1, 26 do
+	for index = 1, 22 do
 		local side = (index % 2 == 0) and theme.Accent or theme.Accent2
 		local dot = New("Frame", {
 			AnchorPoint = Vector2.new(0.5, 0.5),
 			Position = UDim2.fromScale(math.random() * 1, math.random() * 1),
 			Size = UDim2.fromOffset(math.random(2, 4), math.random(2, 4)),
 			BackgroundColor3 = side,
-			BackgroundTransparency = 0.35,
+			BackgroundTransparency = 0.4,
 			BorderSizePixel = 0,
 			Parent = backdrop,
 		})
 		PillCorner(dot)
-		local travel = TweenInfo.new(4 + math.random() * 5, Enum.EasingStyle.Linear, Enum.EasingDirection.Out, -1, true)
+		local travel = TweenInfo.new(4 + math.random() * 5, EASE.Linear, DIR.Out, -1, true)
 		pcall(function()
 			TweenService:Create(dot, travel, {
 				Position = UDim2.fromScale(math.random() * 1, math.random() * 1),
@@ -1231,8 +1400,267 @@ local function BuildLoadingBackdrop(parent)
 	return backdrop
 end
 
---- Tam ekran sinematik yükleme ekranı oynatır.
--- @param onFinish function  → patlama anında (panel görünmeden önce) çağrılır
+--=============================================================================
+-- FAZ 1: VİDEOSUZ İNDİRME EKRANI
+--=============================================================================
+local function BuildDownloadScreen(parent, unit)
+	local theme = Library.Theme
+
+	local group = New("CanvasGroup", {
+		Name = "DownloadScreen",
+		Size = UDim2.fromScale(1, 1),
+		BackgroundColor3 = Color3.fromRGB(5, 7, 11),
+		BackgroundTransparency = 0,
+		BorderSizePixel = 0,
+		GroupTransparency = 0,
+		Parent = parent,
+	})
+
+	-- arka plan ışıkları
+	local glowLeft = New("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.28, 0.35),
+		Size = UDim2.fromScale(0.55, 0.55),
+		BackgroundColor3 = theme.Accent,
+		BackgroundTransparency = 0.9,
+		BorderSizePixel = 0,
+		Parent = group,
+	})
+	PillCorner(glowLeft)
+	local glowRight = glowLeft:Clone()
+	glowRight.Position = UDim2.fromScale(0.74, 0.68)
+	glowRight.BackgroundColor3 = theme.Accent2
+	glowRight.Parent = group
+
+	local pulseInfo = TweenInfo.new(2.4, EASE.Sine, DIR.InOut, -1, true)
+	pcall(function()
+		TweenService:Create(glowLeft, pulseInfo, { BackgroundTransparency = 0.82, Size = UDim2.fromScale(0.62, 0.62) }):Play()
+		TweenService:Create(glowRight, pulseInfo, { BackgroundTransparency = 0.82, Size = UDim2.fromScale(0.62, 0.62) }):Play()
+	end)
+
+	-- logo
+	local logo = New("Frame", {
+		Name = "Logo",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.4),
+		Size = UDim2.fromOffset(74 * unit, 74 * unit),
+		BackgroundColor3 = theme.Accent,
+		BorderSizePixel = 0,
+		Parent = group,
+	})
+	Corner(logo, 22 * unit)
+	AccentGradient(logo, 40)
+	New("UIStroke", {
+		Color = Color3.fromRGB(255, 255, 255),
+		Transparency = 0.75,
+		Thickness = 1.5,
+		Parent = logo,
+	})
+	New("TextLabel", {
+		Size = UDim2.fromScale(1, 1),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.GothamBlack,
+		Text = "A",
+		TextColor3 = Color3.fromRGB(255, 255, 255),
+		TextSize = math.floor(34 * unit),
+		Parent = logo,
+	})
+
+	local spinInfo = TweenInfo.new(2.2, EASE.Linear, DIR.Out, -1)
+	local logoGlow = New("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromScale(1.35, 1.35),
+		BackgroundTransparency = 1,
+		Parent = logo,
+	})
+	PillCorner(logoGlow)
+	New("UIStroke", {
+		Color = theme.Accent2,
+		Transparency = 0.35,
+		Thickness = 2,
+		Parent = logoGlow,
+	})
+	pcall(function()
+		TweenService:Create(logoGlow, spinInfo, { Rotation = 360 }):Play()
+	end)
+
+	-- başlık
+	New("TextLabel", {
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.fromScale(0.5, 0.4),
+		Size = UDim2.new(1, 0, 0, 30 * unit),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.GothamBlack,
+		Text = "AURORA UI",
+		TextColor3 = Color3.fromRGB(255, 255, 255),
+		TextSize = math.floor(24 * unit),
+		Parent = group,
+	})
+
+	New("TextLabel", {
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0.4, 34 * unit),
+		Size = UDim2.new(1, 0, 0, 16 * unit),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.GothamMedium,
+		Text = "SİNEMATİK ARAYÜZ YÜKLENİYOR",
+		TextColor3 = Color3.fromRGB(150, 162, 190),
+		TextSize = math.floor(10 * unit),
+		Parent = group,
+	})
+
+	-- ilerleme çubuğu
+	local barWidth = math.floor(430 * unit)
+	local bar = New("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0.5, 34 * unit),
+		Size = UDim2.fromOffset(barWidth, 6 * unit),
+		BackgroundColor3 = Color3.fromRGB(30, 36, 50),
+		BorderSizePixel = 0,
+		Parent = group,
+	})
+	PillCorner(bar)
+
+	local fill = New("Frame", {
+		Size = UDim2.fromScale(0, 1),
+		BackgroundColor3 = theme.Accent,
+		BorderSizePixel = 0,
+		Parent = bar,
+	})
+	PillCorner(fill)
+	AccentGradient(fill, 0)
+
+	local shine = New("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromScale(0.35, 1),
+		BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+		BackgroundTransparency = 0.55,
+		BorderSizePixel = 0,
+		Parent = fill,
+	})
+	PillCorner(shine)
+	pcall(function()
+		TweenService:Create(shine, TweenInfo.new(1.1, EASE.Sine, DIR.InOut, -1, true), {
+			Position = UDim2.fromScale(-0.2, 0.5),
+		}):Play()
+	end)
+
+	local percentLabel = New("TextLabel", {
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.new(0.5, barWidth / 2, 0.5, 18 * unit),
+		Size = UDim2.fromOffset(80 * unit, 16 * unit),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.GothamBold,
+		Text = "0%",
+		TextColor3 = Color3.fromRGB(255, 255, 255),
+		TextSize = math.floor(12 * unit),
+		TextXAlignment = Enum.TextXAlignment.Right,
+		Parent = group,
+	})
+
+	local statusLabel = New("TextLabel", {
+		AnchorPoint = Vector2.new(0, 0),
+		Position = UDim2.new(0.5, -barWidth / 2, 0.5, 18 * unit),
+		Size = UDim2.fromOffset(barWidth - 90 * unit, 16 * unit),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.GothamMedium,
+		Text = "Bağlantı kuruluyor...",
+		TextColor3 = Color3.fromRGB(170, 182, 205),
+		TextSize = math.floor(11 * unit),
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+		Parent = group,
+	})
+
+	local metaLabel = New("TextLabel", {
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0.5, 56 * unit),
+		Size = UDim2.new(1, 0, 0, 14 * unit),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.Gotham,
+		Text = "intro.mp4  →  workspace/AuroraUI/",
+		TextColor3 = Color3.fromRGB(110, 122, 148),
+		TextSize = math.floor(10 * unit),
+		Parent = group,
+	})
+
+	-- köşe bilgileri
+	New("TextLabel", {
+		Position = UDim2.fromOffset(26 * unit, 22 * unit),
+		Size = UDim2.fromOffset(220 * unit, 14 * unit),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.GothamBold,
+		Text = "AURORA UI  •  " .. Library.Version,
+		TextColor3 = Color3.fromRGB(255, 255, 255),
+		TextTransparency = 0.5,
+		TextSize = math.floor(10 * unit),
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Parent = group,
+	})
+
+	New("TextLabel", {
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.new(1, -26 * unit, 0, 22 * unit),
+		Size = UDim2.fromOffset(70 * unit, 18 * unit),
+		BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+		BackgroundTransparency = 0.9,
+		Font = Enum.Font.GothamBold,
+		Text = "4K",
+		TextColor3 = Color3.fromRGB(255, 255, 255),
+		TextSize = math.floor(10 * unit),
+		Parent = group,
+	})
+	local badge = group:GetChildren()
+	local lastBadge = badge[#badge]
+	if lastBadge then Corner(lastBadge, 5) end
+
+	local hint = New("TextLabel", {
+		AnchorPoint = Vector2.new(1, 1),
+		Position = UDim2.new(1, -26 * unit, 1, -26 * unit),
+		Size = UDim2.fromOffset(250 * unit, 14 * unit),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.Gotham,
+		Text = "İndirmeyi atlamak için tıkla",
+		TextColor3 = Color3.fromRGB(255, 255, 255),
+		TextTransparency = 0.6,
+		TextSize = math.floor(10 * unit),
+		TextXAlignment = Enum.TextXAlignment.Right,
+		Parent = group,
+	})
+
+	local api = { group = group }
+
+	function api:SetStatus(text)
+		statusLabel.Text = tostring(text)
+	end
+
+	function api:SetProgress(current, total)
+		local ratio = 0
+		if total and total > 0 and current and current >= 0 then
+			ratio = Clamp(current / total, 0, 1)
+		elseif current == -1 then
+			ratio = 1
+		end
+		Tween(fill, { Size = UDim2.fromScale(ratio, 1) }, 0.25, EASE.Quad)
+		percentLabel.Text = tostring(math.floor(ratio * 100 + 0.5)) .. "%"
+		if total and total > 0 then
+			metaLabel.Text = string.format("%.1f MB / %.1f MB  →  workspace/AuroraUI/intro.mp4",
+				current / 1048576, total / 1048576)
+		end
+	end
+
+	function api:SetHint(text)
+		hint.Text = tostring(text)
+	end
+
+	return api
+end
+
+--=============================================================================
+-- ANA FONKSİYON
+--=============================================================================
 function Library:PlayLoadingScreen(onFinish)
 	if self._loading then
 		return self._loading
@@ -1249,9 +1677,8 @@ function Library:PlayLoadingScreen(onFinish)
 		cancelled = false,
 		finished = false,
 		boomed = false,
+		phase = "download",
 	}
-	local inputConnection = nil
-	local releaseInput = nil
 	self._loading = loading
 
 	local gui = Instance.new("ScreenGui")
@@ -1276,7 +1703,7 @@ function Library:PlayLoadingScreen(onFinish)
 	local viewport = Viewport()
 	local unit = viewport.Y / 720
 
-	-- KÖK (CanvasGroup: hepsi tek yerden soluklaşsın)
+	-- Kök
 	local root = New("CanvasGroup", {
 		Name = "LoadingRoot",
 		Size = UDim2.fromScale(1, 1),
@@ -1287,468 +1714,618 @@ function Library:PlayLoadingScreen(onFinish)
 		Parent = gui,
 	})
 
-	-- VİDEO KATMANI
-	local videoHolder = New("Frame", {
-		Name = "VideoHolder",
+	-- FAZ 1: indirme ekranı
+	local downloadScreen = BuildDownloadScreen(root, unit)
+
+	-- FAZ 2 konteyneri (video + yazılar + patlama) — indirme bitince doldurulur
+	local showContainer = New("CanvasGroup", {
+		Name = "Show",
 		Size = UDim2.fromScale(1, 1),
 		BackgroundTransparency = 1,
-		ClipsDescendants = true,
-		Parent = root,
-	})
-	local function applyCover()
-		local vp = Viewport()
-		local cover = math.max(vp.X / 16, vp.Y / 9)
-		videoHolder.Size = UDim2.fromOffset(16 * cover, 9 * cover)
-		videoHolder.Position = UDim2.fromOffset(
-			math.floor((vp.X - 16 * cover) / 2),
-			math.floor((vp.Y - 9 * cover) / 2)
-		)
-	end
-	applyCover()
-
-	local fallback = BuildLoadingBackdrop(root)
-
-	-- vinyet (kenarları karart)
-	local vignetteTop = New("Frame", {
-		Size = UDim2.new(1, 0, 0.32, 0),
-		BackgroundColor3 = Color3.fromRGB(0, 0, 0),
-		BackgroundTransparency = 0.25,
-		BorderSizePixel = 0,
-		Parent = root,
-	})
-	New("UIGradient", {
-		Rotation = 90,
-		Transparency = NumberSequence.new({
-			NumberSequenceKeypoint.new(0, 0.15),
-			NumberSequenceKeypoint.new(1, 1),
-		}),
-		Parent = vignetteTop,
-	})
-	local vignetteBottom = vignetteTop:Clone()
-	vignetteBottom.Position = UDim2.new(0, 0, 0.68, 0)
-	vignetteBottom.Rotation = 180
-	vignetteBottom.Parent = root
-
-	-- SİNEMA BANTLARI (başta tam kapalı → açılır)
-	local letterTop = New("Frame", {
-		Name = "LetterTop",
-		Size = UDim2.new(1, 0, 0.5, 0),
-		BackgroundColor3 = Color3.fromRGB(0, 0, 0),
-		BorderSizePixel = 0,
-		ZIndex = 40,
-		Parent = root,
-	})
-	local letterBottom = New("Frame", {
-		Name = "LetterBottom",
-		Position = UDim2.new(0, 0, 0.5, 0),
-		Size = UDim2.new(1, 0, 0.5, 0),
-		BackgroundColor3 = Color3.fromRGB(0, 0, 0),
-		BorderSizePixel = 0,
-		ZIndex = 40,
+		GroupTransparency = 1,
 		Parent = root,
 	})
 
-	-- ORTA ENERJİ ÇİZGİSİ ("videoyu böler" efekti)
-	local seam = New("Frame", {
-		Name = "Seam",
-		AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = UDim2.fromScale(0.5, 0.5),
-		Size = UDim2.new(0, 0, 0, 2),
-		BackgroundColor3 = Color3.fromRGB(255, 255, 255),
-		BackgroundTransparency = 1,
-		BorderSizePixel = 0,
-		ZIndex = 45,
-		Parent = root,
-	})
-	AccentGradient(seam, 0)
-	local seamGlow = New("Frame", {
-		Name = "SeamGlow",
-		AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = UDim2.fromScale(0.5, 0.5),
-		Size = UDim2.new(0, 0, 0, 46 * unit),
-		BackgroundColor3 = theme.Accent,
-		BackgroundTransparency = 1,
-		BorderSizePixel = 0,
-		ZIndex = 44,
-		Parent = root,
-	})
-	New("UIGradient", {
-		Rotation = 90,
-		Transparency = NumberSequence.new({
-			NumberSequenceKeypoint.new(0, 1),
-			NumberSequenceKeypoint.new(0.5, 0.55),
-			NumberSequenceKeypoint.new(1, 1),
-		}),
-		Parent = seamGlow,
-	})
+	local phaseObject = nil
 
-	-- YAZILAR
-	local fontSize = math.floor(78 * unit)
-	local introTexts = self.Options.LoadingTexts or {}
-	local bestGroup = BuildCinematicText(root, introTexts.Best or "BEST", fontSize, 22)
-	local universalGroup = BuildCinematicText(root, introTexts.Universal or "UNIVERSAL", math.floor(fontSize * 0.86), 24)
-	local scriptGroup = BuildCinematicText(root, introTexts.Script or "SCRIPT", math.floor(fontSize * 1.06), 24)
-
-	bestGroup.group.AnchorPoint = Vector2.new(0.5, 0.5)
-	bestGroup.group.Position = UDim2.fromScale(0.5, 0.62)
-	bestGroup.group.Size = UDim2.new(1, 0, 0, fontSize * 1.6)
-
-	universalGroup.group.AnchorPoint = Vector2.new(0.5, 0.5)
-	universalGroup.group.Position = UDim2.fromScale(0.5, 0.5)
-	universalGroup.group.Size = UDim2.new(1, 0, 0, fontSize * 1.6)
-
-	scriptGroup.group.AnchorPoint = Vector2.new(0.5, 0.5)
-	scriptGroup.group.Position = UDim2.fromScale(0.5, 0.5)
-	scriptGroup.group.Size = UDim2.new(1, 0, 0, fontSize * 1.6)
-
-	-- yazıları başlangıçta tamamen gizle
-	local textGroups = { bestGroup, universalGroup, scriptGroup }
-	for _, textGroup in ipairs(textGroups) do
-		for _, label in ipairs(textGroup.layers) do
-			label.TextTransparency = 1
-			for _, child in ipairs(label:GetChildren()) do
-				if child:IsA("UIStroke") then
-					child.Transparency = 1
-				end
-			end
-		end
-	end
-
-	local function fadeText(textGroup, targetAlpha, duration, easing)
-		for index, label in ipairs(textGroup.layers) do
-			local baseAlpha = 1
-			if label == textGroup.chromaRed or label == textGroup.chromaCyan then
-				baseAlpha = 0.22
-			elseif label == textGroup.glow then
-				baseAlpha = 0.28
-			elseif label == textGroup.main then
-				baseAlpha = 0
-			end
-			Tween(label, { TextTransparency = Clamp(targetAlpha + baseAlpha, 0, 1) }, duration or 0.3, easing)
-			for _, child in ipairs(label:GetChildren()) do
-				if child:IsA("UIStroke") then
-					local strokeBase = (label == textGroup.glow) and 0.45 or 0.5
-					Tween(child, { Transparency = Clamp(targetAlpha + strokeBase, 0, 1) }, duration or 0.3, easing)
-				end
-			end
-		end
-	end
-
-	-- PATLAMA PARÇALARI
-	local flash = New("Frame", {
-		Name = "Flash",
-		Size = UDim2.fromScale(1, 1),
-		BackgroundColor3 = Color3.fromRGB(255, 255, 255),
-		BackgroundTransparency = 1,
-		BorderSizePixel = 0,
-		ZIndex = 60,
-		Parent = root,
-	})
-
-	local ring = New("Frame", {
-		Name = "Ring",
-		AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = UDim2.fromScale(0.5, 0.5),
-		Size = UDim2.fromOffset(30, 30),
-		BackgroundTransparency = 1,
-		Visible = false,
-		ZIndex = 58,
-		Parent = root,
-	})
-	PillCorner(ring)
-	local ringStroke = New("UIStroke", {
-		Color = theme.Accent2,
-		Thickness = 6,
-		Transparency = 0.1,
-		Parent = ring,
-	})
-	AccentGradient(ringStroke, 90)
-
-	local shardLayer = New("Frame", {
-		Name = "Shards",
-		Size = UDim2.fromScale(1, 1),
-		BackgroundTransparency = 1,
-		ZIndex = 57,
-		Parent = root,
-	})
-
-	-- ALT BİLGİ / PROGRESS
-	local progressTrack = New("Frame", {
-		Name = "Progress",
-		AnchorPoint = Vector2.new(0.5, 1),
-		Position = UDim2.new(0.5, 0, 1, -26 * unit),
-		Size = UDim2.new(0, 320 * unit, 0, 3),
-		BackgroundColor3 = Color3.fromRGB(255, 255, 255),
-		BackgroundTransparency = 0.82,
-		BorderSizePixel = 0,
-		ZIndex = 50,
-		Parent = root,
-	})
-	PillCorner(progressTrack)
-
-	local progressFill = New("Frame", {
-		Size = UDim2.fromScale(0, 1),
-		BackgroundColor3 = theme.Accent,
-		BorderSizePixel = 0,
-		ZIndex = 51,
-		Parent = progressTrack,
-	})
-	PillCorner(progressFill)
-	AccentGradient(progressFill, 0)
-
-	local statusLabel = New("TextLabel", {
-		AnchorPoint = Vector2.new(0.5, 1),
-		Position = UDim2.new(0.5, 0, 1, -36 * unit),
-		Size = UDim2.new(0, 420 * unit, 0, 16),
-		BackgroundTransparency = 1,
-		Font = Enum.Font.GothamMedium,
-		Text = "YÜKLENİYOR",
-		TextColor3 = Color3.fromRGB(190, 200, 220),
-		TextTransparency = 0.35,
-		TextSize = math.floor(11 * unit),
-		ZIndex = 50,
-		Parent = root,
-	})
-
-	local brandLabel = New("TextLabel", {
-		Position = UDim2.new(0, 26 * unit, 1, -34 * unit),
-		Size = UDim2.fromOffset(220 * unit, 14),
-		BackgroundTransparency = 1,
-		Font = Enum.Font.GothamBold,
-		Text = "AURORA UI  •  " .. self.Version,
-		TextColor3 = Color3.fromRGB(255, 255, 255),
-		TextTransparency = 0.55,
-		TextSize = math.floor(10 * unit),
-		TextXAlignment = Enum.TextXAlignment.Left,
-		ZIndex = 50,
-		Parent = root,
-	})
-
-	local qualityBadge = New("TextLabel", {
-		AnchorPoint = Vector2.new(1, 0),
-		Position = UDim2.new(1, -26 * unit, 0, 22 * unit),
-		Size = UDim2.fromOffset(64 * unit, 18 * unit),
-		BackgroundColor3 = Color3.fromRGB(255, 255, 255),
-		BackgroundTransparency = 0.9,
-		Font = Enum.Font.GothamBold,
-		Text = "4K",
-		TextColor3 = Color3.fromRGB(255, 255, 255),
-		TextSize = math.floor(10 * unit),
-		ZIndex = 50,
-		Parent = root,
-	})
-	Corner(qualityBadge, 5)
-
-	local skipHint = New("TextLabel", {
-		AnchorPoint = Vector2.new(1, 1),
-		Position = UDim2.new(1, -26 * unit, 1, -34 * unit),
-		Size = UDim2.fromOffset(240 * unit, 14),
-		BackgroundTransparency = 1,
-		Font = Enum.Font.Gotham,
-		Text = "Atlamak için tıkla / SPACE",
-		TextColor3 = Color3.fromRGB(255, 255, 255),
-		TextTransparency = 0.6,
-		TextSize = math.floor(10 * unit),
-		TextXAlignment = Enum.TextXAlignment.Right,
-		ZIndex = 50,
-		Parent = root,
-	})
-
-	-- PROGRESS ANİMASYONU
-	local progressTween = Tween(progressFill, { Size = UDim2.fromScale(1, 1) }, at(6.2), Enum.EasingStyle.Linear)
-	if progressTween then
-		pcall(function() progressTween:Pause() end)
-	end
-	task.delay(0.25 / speed, function()
-		if loading.finished then return end
-		if progressTween then
-			pcall(function() progressTween:Play() end)
-		end
-	end)
-
-	local statusSteps = 4
-	for index = 1, statusSteps do
-		task.delay(at(index * 1.45), function()
-			if loading.finished or loading.cancelled then return end
-			local texts = {
-				"YÜKLENİYOR",
-				"GÜVENLİK KONTROLÜ",
-				"ARAYÜZ HAZIRLANIYOR",
-				"HAZIR",
-			}
-			statusLabel.Text = texts[math.min(index + 1, #texts)]
+	-- Zamanlayıcı yardımcıları
+	local function step(seconds, fn)
+		task.delay(at(seconds), function()
+			if loading.cancelled or loading.finished then return end
+			fn()
 		end)
 	end
 
-	-- VİDEO YÜKLEME (asenkron, hata olursa animasyonlu arka plan kalır)
-	task.spawn(function()
-		local asset = nil
-		local okResolve, resolved = pcall(function() return Library:_resolveIntroVideo() end)
-		if okResolve then asset = resolved end
-		if not asset or loading.finished or loading.cancelled then return end
-		if not videoHolder.Parent then return end
-
-		local okVideo, video = pcall(function()
-			local frame = Instance.new("VideoFrame")
-			frame.Name = "IntroVideo"
-			frame.BackgroundTransparency = 1
-			frame.BorderSizePixel = 0
-			frame.Size = UDim2.fromScale(1, 1)
-			frame.Looped = true
-			frame.Volume = 0
-			frame.Video = asset
-			frame.Parent = videoHolder
-			return frame
-		end)
-		if not okVideo or not video then return end
-
-		loading.video = video
-		pcall(function() video:Play() end)
-		Tween(fallback, { GroupTransparency = 1 }, 0.6, Enum.EasingStyle.Quad)
-	end)
-
-	-- PATLAMA
-	local function explode()
-		if loading.boomed or loading.finished then return end
-		loading.boomed = true
-
-		local vp = Viewport()
-		local center = UDim2.fromScale(0.5, 0.5)
-
-		-- beyaz flaş
-		flash.BackgroundTransparency = 0
-		Tween(flash, { BackgroundTransparency = 1 }, 0.55, Enum.EasingStyle.Quad)
-
-		-- halka
-		ring.Visible = true
-		ring.Position = center
-		ring.Size = UDim2.fromOffset(40, 40)
-		ringStroke.Transparency = 0.05
-		ringStroke.Thickness = 8
-		Tween(ring, { Size = UDim2.fromOffset(vp.X * 2.6, vp.X * 2.6) }, 0.75, Enum.EasingStyle.Expo, Enum.EasingDirection.Out)
-		Tween(ringStroke, { Transparency = 1, Thickness = 1 }, 0.7, Enum.EasingStyle.Quad)
-
-		-- yazılar dağılsın
-		Tween(bestGroup.scale, { Scale = 1.5 * unit }, 0.3)
-		Tween(universalGroup.scale, { Scale = 1.35 * unit }, 0.3)
-		Tween(scriptGroup.scale, { Scale = 1.45 * unit }, 0.3)
-		fadeText(bestGroup, 1, 0.22)
-		fadeText(universalGroup, 1, 0.22)
-		fadeText(scriptGroup, 1, 0.22)
-
-		-- cam kırıkları
-		for index = 1, 24 do
-			local angle = (index / 24) * math.pi * 2 + math.random() * 0.2
-			local length = math.random(60, 220) * unit
-			local shard = New("Frame", {
-				AnchorPoint = Vector2.new(0.5, 0.5),
-				Position = center,
-				Size = UDim2.fromOffset(length, math.random(2, 5) * unit),
-				Rotation = math.deg(angle),
-				BackgroundColor3 = (index % 2 == 0) and theme.Accent or theme.Accent2,
-				BackgroundTransparency = 0.15,
-				BorderSizePixel = 0,
-				ZIndex = 57,
-				Parent = shardLayer,
-			})
-			PillCorner(shard)
-			local distance = math.random(220, 520) * unit
-			local target = UDim2.fromOffset(
-				viewport.X / 2 + math.cos(angle) * distance,
-				viewport.Y / 2 + math.sin(angle) * distance
+	--==========================================================================
+	-- FAZ 2: VİDEO + YAZILAR + PATLAMA
+	--==========================================================================
+	local function buildShowPhase(asset)
+		local videoHolder = New("Frame", {
+			Name = "VideoHolder",
+			Size = UDim2.fromScale(1, 1),
+			BackgroundTransparency = 1,
+			ClipsDescendants = true,
+			Parent = showContainer,
+		})
+		local function applyCover()
+			local vp = Viewport()
+			local cover = math.max(vp.X / 16, vp.Y / 9)
+			videoHolder.Size = UDim2.fromOffset(16 * cover, 9 * cover)
+			videoHolder.Position = UDim2.fromOffset(
+				math.floor((vp.X - 16 * cover) / 2),
+				math.floor((vp.Y - 9 * cover) / 2)
 			)
-			Tween(shard, {
-				Position = target,
-				BackgroundTransparency = 1,
-				Size = UDim2.fromOffset(length * 1.6, 1),
-			}, 0.6 + math.random() * 0.25, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
 		end
+		applyCover()
 
-		-- kıvılcımlar
-		for index = 1, 30 do
-			local spark = New("Frame", {
-				AnchorPoint = Vector2.new(0.5, 0.5),
-				Position = center,
-				Size = UDim2.fromOffset(4 * unit, 4 * unit),
-				BackgroundColor3 = Color3.fromRGB(255, 255, 255),
-				BorderSizePixel = 0,
-				ZIndex = 59,
-				Parent = shardLayer,
-			})
-			PillCorner(spark)
-			local angle = math.random() * math.pi * 2
-			local distance = math.random(80, 460) * unit
-			Tween(spark, {
-				Position = UDim2.fromOffset(
-					viewport.X / 2 + math.cos(angle) * distance,
-					viewport.Y / 2 + math.sin(angle) * distance
-				),
-				BackgroundTransparency = 1,
-				Size = UDim2.fromOffset(1, 1),
-			}, 0.45 + math.random() * 0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-		end
+		local fallback = BuildAuroraBackdrop(showContainer)
 
-		-- sarsıntı
-		local shakeSteps = 8
-		for stepIndex = 1, shakeSteps do
-			task.delay(stepIndex * 0.035, function()
-				if loading.finished then return end
-				local strength = math.floor((18 * unit) * (1 - stepIndex / shakeSteps))
-				root.Position = UDim2.fromOffset(math.random(-strength, strength), math.random(-strength, strength))
-			end)
-		end
-		task.delay(shakeSteps * 0.035, function()
-			if root then root.Position = UDim2.fromOffset(0, 0) end
-		end)
+		-- vinyet
+		local vignetteTop = New("Frame", {
+			Size = UDim2.new(1, 0, 0.32, 0),
+			BackgroundColor3 = Color3.fromRGB(0, 0, 0),
+			BackgroundTransparency = 0.25,
+			BorderSizePixel = 0,
+			Parent = showContainer,
+		})
+		New("UIGradient", {
+			Rotation = 90,
+			Transparency = NumberSequence.new({
+				NumberSequenceKeypoint.new(0, 0.15),
+				NumberSequenceKeypoint.new(1, 1),
+			}),
+			Parent = vignetteTop,
+		})
+		local vignetteBottom = vignetteTop:Clone()
+		vignetteBottom.Position = UDim2.new(0, 0, 0.68, 0)
+		vignetteBottom.Rotation = 180
+		vignetteBottom.Parent = showContainer
 
-		-- sinema bantları açılsın + video büyüsün
-		Tween(letterTop, { Size = UDim2.new(1, 0, 0, 0) }, 0.5, Enum.EasingStyle.Expo, Enum.EasingDirection.Out)
-		Tween(letterBottom, {
+		-- sinema bantları
+		-- NOT: bantlar 0 yükseklikte başlar; video tam ekran görünür.
+		-- Sekans başlarken 8.5%, ekran bölünürken 19% yüksekliğe açılır.
+		local letterTop = New("Frame", {
+			Name = "LetterTop",
+			Size = UDim2.new(1, 0, 0, 0),
+			BackgroundColor3 = Color3.fromRGB(0, 0, 0),
+			BorderSizePixel = 0,
+			ZIndex = 40,
+			Parent = showContainer,
+		})
+		local letterBottom = New("Frame", {
+			Name = "LetterBottom",
 			Position = UDim2.new(0, 0, 1, 0),
 			Size = UDim2.new(1, 0, 0, 0),
-		}, 0.5, Enum.EasingStyle.Expo, Enum.EasingDirection.Out)
+			BackgroundColor3 = Color3.fromRGB(0, 0, 0),
+			BorderSizePixel = 0,
+			ZIndex = 40,
+			Parent = showContainer,
+		})
 
-		-- paneli flaşın içinde göster
-		if type(onFinish) == "function" then
-			task.delay(at(0.12), function()
-				pcall(onFinish)
+		-- enerji çizgisi
+		local seam = New("Frame", {
+			Name = "Seam",
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.fromScale(0.5, 0.5),
+			Size = UDim2.new(0, 0, 0, 2),
+			BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			ZIndex = 45,
+			Parent = showContainer,
+		})
+		AccentGradient(seam, 0)
+		local seamGlow = New("Frame", {
+			Name = "SeamGlow",
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.fromScale(0.5, 0.5),
+			Size = UDim2.new(0, 0, 0, 46 * unit),
+			BackgroundColor3 = theme.Accent,
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			ZIndex = 44,
+			Parent = showContainer,
+		})
+		New("UIGradient", {
+			Rotation = 90,
+			Transparency = NumberSequence.new({
+				NumberSequenceKeypoint.new(0, 1),
+				NumberSequenceKeypoint.new(0.5, 0.55),
+				NumberSequenceKeypoint.new(1, 1),
+			}),
+			Parent = seamGlow,
+		})
+
+		-- yazılar
+		local introTexts = self.Options.LoadingTexts or {}
+		local fontSize = math.floor(78 * unit)
+		local bestGroup = BuildCinematicText(showContainer, introTexts.Best or "BEST", fontSize, 22)
+		local universalGroup = BuildCinematicText(showContainer, introTexts.Universal or "UNIVERSAL",
+			math.floor(fontSize * 0.86), 24)
+		local scriptGroup = BuildCinematicText(showContainer, introTexts.Script or "SCRIPT",
+			math.floor(fontSize * 1.06), 24)
+
+		bestGroup.group.AnchorPoint = Vector2.new(0.5, 0.5)
+		bestGroup.group.Position = UDim2.fromScale(0.5, 0.62)
+		bestGroup.group.Size = UDim2.new(1, 0, 0, fontSize * 1.6)
+
+		universalGroup.group.AnchorPoint = Vector2.new(0.5, 0.5)
+		universalGroup.group.Position = UDim2.fromScale(0.5, 0.5)
+		universalGroup.group.Size = UDim2.new(1, 0, 0, fontSize * 1.6)
+
+		scriptGroup.group.AnchorPoint = Vector2.new(0.5, 0.5)
+		scriptGroup.group.Position = UDim2.fromScale(0.5, 0.5)
+		scriptGroup.group.Size = UDim2.new(1, 0, 0, fontSize * 1.6)
+
+		local textGroups = { bestGroup, universalGroup, scriptGroup }
+		for _, textGroup in ipairs(textGroups) do
+			HideTextGroup(textGroup)
+		end
+
+		-- patlama katmanları
+		local flash = New("Frame", {
+			Name = "Flash",
+			Size = UDim2.fromScale(1, 1),
+			BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			ZIndex = 60,
+			Parent = showContainer,
+		})
+
+		local ring = New("Frame", {
+			Name = "Ring",
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.fromScale(0.5, 0.5),
+			Size = UDim2.fromOffset(30, 30),
+			BackgroundTransparency = 1,
+			Visible = false,
+			ZIndex = 58,
+			Parent = showContainer,
+		})
+		PillCorner(ring)
+		local ringStroke = New("UIStroke", {
+			Color = theme.Accent2,
+			Thickness = 6,
+			Transparency = 0.1,
+			Parent = ring,
+		})
+		AccentGradient(ringStroke, 90)
+
+		local shardLayer = New("Frame", {
+			Name = "Shards",
+			Size = UDim2.fromScale(1, 1),
+			BackgroundTransparency = 1,
+			ZIndex = 57,
+			Parent = showContainer,
+		})
+
+		-- alt bilgi
+		local progressTrack = New("Frame", {
+			AnchorPoint = Vector2.new(0.5, 1),
+			Position = UDim2.new(0.5, 0, 1, -26 * unit),
+			Size = UDim2.new(0, 320 * unit, 0, 3),
+			BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+			BackgroundTransparency = 0.82,
+			BorderSizePixel = 0,
+			ZIndex = 50,
+			Parent = showContainer,
+		})
+		PillCorner(progressTrack)
+		local progressFill = New("Frame", {
+			Size = UDim2.fromScale(0, 1),
+			BackgroundColor3 = theme.Accent,
+			BorderSizePixel = 0,
+			ZIndex = 51,
+			Parent = progressTrack,
+		})
+		PillCorner(progressFill)
+		AccentGradient(progressFill, 0)
+
+		local statusLabel = New("TextLabel", {
+			AnchorPoint = Vector2.new(0.5, 1),
+			Position = UDim2.new(0.5, 0, 1, -36 * unit),
+			Size = UDim2.new(0, 460 * unit, 0, 16),
+			BackgroundTransparency = 1,
+			Font = Enum.Font.GothamMedium,
+			Text = "SİNEMATİK GİRİŞ",
+			TextColor3 = Color3.fromRGB(190, 200, 220),
+			TextTransparency = 0.35,
+			TextSize = math.floor(11 * unit),
+			ZIndex = 50,
+			Parent = showContainer,
+		})
+
+		New("TextLabel", {
+			Position = UDim2.new(0, 26 * unit, 1, -34 * unit),
+			Size = UDim2.fromOffset(240 * unit, 14),
+			BackgroundTransparency = 1,
+			Font = Enum.Font.GothamBold,
+			Text = "AURORA UI  •  " .. self.Version,
+			TextColor3 = Color3.fromRGB(255, 255, 255),
+			TextTransparency = 0.55,
+			TextSize = math.floor(10 * unit),
+			TextXAlignment = Enum.TextXAlignment.Left,
+			ZIndex = 50,
+			Parent = showContainer,
+		})
+
+		local skipHint = New("TextLabel", {
+			AnchorPoint = Vector2.new(1, 1),
+			Position = UDim2.new(1, -26 * unit, 1, -34 * unit),
+			Size = UDim2.fromOffset(250 * unit, 14),
+			BackgroundTransparency = 1,
+			Font = Enum.Font.Gotham,
+			Text = "Atlamak için tıkla / SPACE",
+			TextColor3 = Color3.fromRGB(255, 255, 255),
+			TextTransparency = 0.6,
+			TextSize = math.floor(10 * unit),
+			TextXAlignment = Enum.TextXAlignment.Right,
+			ZIndex = 50,
+			Parent = showContainer,
+		})
+
+		local video = nil
+		local videoLoaded = false
+		local videoDuration = tonumber(self.Options.IntroVideoDuration) or DEFAULT_VIDEO_DURATION
+		local sequenceStarted = false
+		local sequenceAt = math.huge
+
+		-- video oluştur
+		if asset then
+			local okVideo, created = pcall(function()
+				local frame = Instance.new("VideoFrame")
+				frame.Name = "IntroVideo"
+				frame.BackgroundTransparency = 1
+				frame.BorderSizePixel = 0
+				frame.Size = UDim2.fromScale(1, 1)
+				frame.Looped = false
+				frame.Volume = self.Options.IntroVideoVolume or 0.35
+				frame.Video = asset
+				frame.Parent = videoHolder
+				return frame
+			end)
+			if okVideo and created then
+				video = created
+				loading.video = video
+				pcall(function() video:Play() end)
+			end
+		end
+
+		-- patlama
+		local function explode()
+			if loading.boomed or loading.finished then return end
+			loading.boomed = true
+			loading.phase = "explode"
+
+			local currentViewport = Viewport()
+			local center = UDim2.fromScale(0.5, 0.5)
+
+			flash.BackgroundTransparency = 0
+			Tween(flash, { BackgroundTransparency = 1 }, 0.55, EASE.Quad)
+
+			ring.Visible = true
+			ring.Position = center
+			ring.Size = UDim2.fromOffset(40, 40)
+			ringStroke.Transparency = 0.05
+			ringStroke.Thickness = 8
+			Tween(ring, { Size = UDim2.fromOffset(currentViewport.X * 2.6, currentViewport.X * 2.6) },
+				0.75, EASE.Snappy, DIR.Out)
+			Tween(ringStroke, { Transparency = 1, Thickness = 1 }, 0.7, EASE.Quad)
+
+			Tween(bestGroup.scale, { Scale = 1.5 * unit }, 0.3)
+			Tween(universalGroup.scale, { Scale = 1.35 * unit }, 0.3)
+			Tween(scriptGroup.scale, { Scale = 1.45 * unit }, 0.3)
+			FadeTextGroup(bestGroup, 1, 0.22)
+			FadeTextGroup(universalGroup, 1, 0.22)
+			FadeTextGroup(scriptGroup, 1, 0.22)
+
+			for index = 1, 24 do
+				local angle = (index / 24) * math.pi * 2 + math.random() * 0.2
+				local length = math.random(60, 220) * unit
+				local shard = New("Frame", {
+					AnchorPoint = Vector2.new(0.5, 0.5),
+					Position = center,
+					Size = UDim2.fromOffset(length, math.random(2, 5) * unit),
+					Rotation = math.deg(angle),
+					BackgroundColor3 = (index % 2 == 0) and theme.Accent or theme.Accent2,
+					BackgroundTransparency = 0.15,
+					BorderSizePixel = 0,
+					ZIndex = 57,
+					Parent = shardLayer,
+				})
+				PillCorner(shard)
+				local distance = math.random(220, 520) * unit
+				Tween(shard, {
+					Position = UDim2.fromOffset(
+						currentViewport.X / 2 + math.cos(angle) * distance,
+						currentViewport.Y / 2 + math.sin(angle) * distance
+					),
+					BackgroundTransparency = 1,
+					Size = UDim2.fromOffset(length * 1.6, 1),
+				}, 0.6 + math.random() * 0.25, EASE.Quint, DIR.Out)
+			end
+
+			for index = 1, 30 do
+				local spark = New("Frame", {
+					AnchorPoint = Vector2.new(0.5, 0.5),
+					Position = center,
+					Size = UDim2.fromOffset(4 * unit, 4 * unit),
+					BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+					BorderSizePixel = 0,
+					ZIndex = 59,
+					Parent = shardLayer,
+				})
+				PillCorner(spark)
+				local angle = math.random() * math.pi * 2
+				local distance = math.random(80, 460) * unit
+				Tween(spark, {
+					Position = UDim2.fromOffset(
+						currentViewport.X / 2 + math.cos(angle) * distance,
+						currentViewport.Y / 2 + math.sin(angle) * distance
+					),
+					BackgroundTransparency = 1,
+					Size = UDim2.fromOffset(1, 1),
+				}, 0.45 + math.random() * 0.35, EASE.Quad, DIR.Out)
+			end
+
+			local shakeSteps = 8
+			for stepIndex = 1, shakeSteps do
+				task.delay(stepIndex * 0.035, function()
+					if loading.finished then return end
+					local strength = math.floor((18 * unit) * (1 - stepIndex / shakeSteps))
+					root.Position = UDim2.fromOffset(math.random(-strength, strength), math.random(-strength, strength))
+				end)
+			end
+			task.delay(shakeSteps * 0.035, function()
+				if root then root.Position = UDim2.fromOffset(0, 0) end
+			end)
+
+			Tween(letterTop, { Size = UDim2.new(1, 0, 0, 0) }, 0.5, EASE.Snappy, DIR.Out)
+			Tween(letterBottom, {
+				Position = UDim2.new(0, 0, 1, 0),
+				Size = UDim2.new(1, 0, 0, 0),
+			}, 0.5, EASE.Snappy, DIR.Out)
+
+			if type(onFinish) == "function" then
+				task.delay(at(0.12), function()
+					pcall(onFinish)
+				end)
+			end
+
+			task.delay(at(0.55), function()
+				loading.finished = true
+				if loading.ReleaseInput then loading.ReleaseInput() end
+				Tween(showContainer, { GroupTransparency = 1 }, 0.45, EASE.Quad)
+				Tween(root, { GroupTransparency = 1 }, 0.45, EASE.Quad)
+				task.delay(0.5, function()
+					pcall(function() gui:Destroy() end)
+					if Library._loading == loading then
+						Library._loading = nil
+					end
+				end)
 			end)
 		end
 
-		-- yükleme ekranını çöz
-		task.delay(at(0.55), function()
-			loading.finished = true
-			releaseInput()
-			Tween(root, { GroupTransparency = 1 }, 0.45, Enum.EasingStyle.Quad)
-			task.delay(0.5, function()
-				pcall(function() gui:Destroy() end)
-				if Library._loading == loading then
-					Library._loading = nil
+		-- yazı sekansı
+		local sequenceBase = 0
+		local function startSequence(forceNow)
+			if sequenceStarted then return end
+			sequenceStarted = true
+			loading.phase = "sequence"
+			sequenceBase = 0
+
+			-- sinema bantlarını kapat (video varsa)
+			Tween(letterTop, { Size = UDim2.new(1, 0, 0.085, 0) }, 0.6, EASE.Snappy, DIR.Out)
+			Tween(letterBottom, {
+				Position = UDim2.new(0, 0, 0.915, 0),
+				Size = UDim2.new(1, 0, 0.085, 0),
+			}, 0.6, EASE.Snappy, DIR.Out)
+
+			-- BEST alttan
+			step(0.15, function()
+				bestGroup.group.Position = UDim2.fromScale(0.5, 0.78)
+				bestGroup.scale.Scale = unit * 0.82
+				FadeTextGroup(bestGroup, 0, 0.18)
+				Tween(bestGroup.group, { Position = UDim2.fromScale(0.5, 0.59) }, 0.75, EASE.Snappy, DIR.Out)
+				Tween(bestGroup.scale, { Scale = unit }, 0.75, EASE.Back, DIR.Out)
+				Tween(bestGroup.glow, { TextColor3 = theme.Accent2 }, 0.4)
+			end)
+
+			-- BEST gider
+			step(2.0, function()
+				Tween(bestGroup.group, { Position = UDim2.fromScale(0.5, 0.35) }, 0.45, EASE.Quint, DIR.In)
+				Tween(bestGroup.scale, { Scale = unit * 0.9 }, 0.45, EASE.Quint)
+				FadeTextGroup(bestGroup, 1, 0.45)
+			end)
+
+			-- ekran bölünür
+			step(2.45, function()
+				seam.BackgroundTransparency = 0.25
+				seamGlow.BackgroundTransparency = 0.75
+				Tween(letterTop, { Size = UDim2.new(1, 0, 0.19, 0) }, 0.55, EASE.Snappy, DIR.InOut)
+				Tween(letterBottom, {
+					Position = UDim2.new(0, 0, 0.81, 0),
+					Size = UDim2.new(1, 0, 0.19, 0),
+				}, 0.55, EASE.Snappy, DIR.InOut)
+				Tween(seam, { Size = UDim2.new(1, 0, 0, 2) }, 0.6, EASE.Snappy, DIR.Out)
+				Tween(seamGlow, { Size = UDim2.new(1, 0, 0, 76 * unit) }, 0.6, EASE.Snappy, DIR.Out)
+			end)
+
+			-- UNIVERSAL + SCRIPT
+			step(2.7, function()
+				universalGroup.group.Position = UDim2.fromScale(0.5, 0.5 - 0.26)
+				universalGroup.scale.Scale = unit * 1.05
+				scriptGroup.group.Position = UDim2.fromScale(0.5, 0.5 + 0.26)
+				scriptGroup.scale.Scale = unit * 1.05
+
+				FadeTextGroup(universalGroup, 0, 0.2)
+				FadeTextGroup(scriptGroup, 0, 0.2)
+
+				Tween(universalGroup.group, { Position = UDim2.fromScale(0.5, 0.5 - 0.105) }, 0.65, EASE.Snappy, DIR.Out)
+				Tween(scriptGroup.group, { Position = UDim2.fromScale(0.5, 0.5 + 0.105) }, 0.65, EASE.Snappy, DIR.Out)
+				Tween(universalGroup.scale, { Scale = unit }, 0.6, EASE.Back, DIR.Out)
+				Tween(scriptGroup.scale, { Scale = unit }, 0.6, EASE.Back, DIR.Out)
+			end)
+
+			-- enerji yükselir
+			step(3.55, function()
+				local pulse = TweenInfo.new(0.22, EASE.Sine, DIR.InOut, -1, true)
+				pcall(function()
+					TweenService:Create(seamGlow, pulse, { BackgroundTransparency = 0.35 }):Play()
+					TweenService:Create(seam, pulse, { BackgroundTransparency = 0 }):Play()
+					TweenService:Create(universalGroup.glow, pulse, { TextTransparency = 0.05 }):Play()
+					TweenService:Create(scriptGroup.glow, pulse, { TextTransparency = 0.05 }):Play()
+				end)
+				for index = 1, 6 do
+					task.delay(at(index * 0.16), function()
+						if loading.cancelled or loading.finished then return end
+						local strength = math.floor((3 + index * 1.4) * unit)
+						root.Position = UDim2.fromOffset(math.random(-strength, strength), math.random(-strength, strength))
+					end)
 				end
 			end)
+
+			step(4.75, function()
+				root.Position = UDim2.fromOffset(0, 0)
+				explode()
+			end)
+
+			step(6.2, function()
+				explode()
+			end)
+		end
+
+		loading.StartSequence = function()
+			startSequence(true)
+		end
+
+		-- video yüklendi mi? + ilerlemeyi izle (tekrar eden tick zinciri)
+		local waited = 0
+		local ticks = 0
+		local maxWait = tonumber(self.Options.VideoLoadTimeout) or 8
+
+		local function watchTick()
+			if loading.cancelled or loading.finished then return end
+			ticks = ticks + 1
+
+			local loadedFlag = false
+			local timeLength = 0
+			local timePosition = 0
+			if video then
+				pcall(function()
+					loadedFlag = video.IsLoaded == true
+					timeLength = tonumber(video.TimeLength) or 0
+					timePosition = tonumber(video.TimePosition) or 0
+				end)
+				if loadedFlag and not videoLoaded then
+					videoLoaded = true
+					Tween(fallback, { GroupTransparency = 1 }, 0.6, EASE.Quad)
+					if timeLength > 1 then
+						videoDuration = timeLength
+					end
+					sequenceAt = math.max(1.5, videoDuration - (self.Options.SequenceLead or 6.2))
+					-- yükleme bitmeden çağrılan Play() bazen boşa gider: tekrar başlat
+					pcall(function()
+						if video.TimePosition > 0.15 then video.TimePosition = 0 end
+						video:Play()
+					end)
+				end
+
+				-- ilerleme çubuğu videonun gerçek zamanına bağlı
+				if videoLoaded and not sequenceStarted and timeLength > 0 then
+					local ratio = timePosition / timeLength
+					if ratio < 0 then ratio = 0 elseif ratio > 1 then ratio = 1 end
+					progressFill.Size = UDim2.fromScale(ratio, 1)
+				end
+			end
+
+			if not videoLoaded then
+				waited = waited + 0.1
+				if waited >= maxWait then
+					-- video yüklenemedi: animasyonlu arka planla devam
+					loading.phase = "fallback"
+					statusLabel.Text = "VİDEO YÜKLENEMEDİ  •  ARAYÜZ MODU"
+					startSequence(true)
+					return
+				end
+			elseif not sequenceStarted and timePosition >= sequenceAt then
+				startSequence(false)
+				return
+			end
+
+			if ticks < 3000 then
+				task.delay(0.1, watchTick)
+			end
+		end
+		watchTick()
+
+		-- video yoksa çubuk zamanla dolar; varsa watchTick gerçek TimePosition'ı yazar
+		progressFill.Size = UDim2.fromScale(0, 1)
+		if not video then
+			local track = Tween(progressFill, { Size = UDim2.fromScale(1, 1) }, at(6), EASE.Linear)
+			if track then pcall(function() track:Pause() end) end
+			task.delay(at(0.25), function()
+				if track then pcall(function() track:Play() end) end
+			end)
+		end
+
+		phaseObject = {
+			explode = explode,
+			startSequence = startSequence,
+			isSequenceStarted = function() return sequenceStarted end,
+			videoLoaded = function() return videoLoaded end,
+		}
+		return phaseObject
+	end
+
+	--==========================================================================
+	-- FAZ GEÇİŞİ: indirme ekranı → video
+	--==========================================================================
+	local function startShowPhase(asset)
+		loading.phase = "video"
+		buildShowPhase(asset)
+		Tween(showContainer, { GroupTransparency = 0 }, 0.45, EASE.Quad)
+		Tween(downloadScreen.group, { GroupTransparency = 1 }, 0.35, EASE.Quad)
+		task.delay(0.4, function()
+			pcall(function() downloadScreen.group:Destroy() end)
 		end)
 	end
 
+	--==========================================================================
 	-- ATLAMA
+	--==========================================================================
 	local function skip()
-		if loading.finished or loading.cancelled then return end
-		loading.cancelled = true
-		explode()
+		if loading.finished then return end
+		if loading.phase == "download" then
+			loading.skipDownload = true
+			return
+		end
+		if not phaseObject then
+			loading.skipVideo = true
+			return
+		end
+		if loading.phase == "video" then
+			loading.skipVideo = true
+			phaseObject.startSequence()
+			return
+		end
+		phaseObject.explode()
 	end
 
 	loading.Skip = skip
-	loading.Explode = explode
 	loading.Destroy = function()
 		loading.cancelled = true
 		loading.finished = true
-		releaseInput()
+		if loading.ReleaseInput then loading.ReleaseInput() end
 		pcall(function() gui:Destroy() end)
 		if Library._loading == loading then
 			Library._loading = nil
 		end
 	end
 
-	inputConnection = Connect(Service("UserInputService").InputBegan, function(input, gameProcessed)
+	-- giriş: tıkla / space / enter
+	local inputConnection = Connect(Service("UserInputService").InputBegan, function(input)
 		if loading.finished then return end
 		if input.UserInputType == Enum.UserInputType.MouseButton1
 			or input.UserInputType == Enum.UserInputType.Touch
@@ -1757,14 +2334,12 @@ function Library:PlayLoadingScreen(onFinish)
 			skip()
 		end
 	end)
-
-	releaseInput = function()
+	loading.ReleaseInput = function()
 		if inputConnection then
 			pcall(function() inputConnection:Disconnect() end)
 			inputConnection = nil
 		end
 	end
-	loading.ReleaseInput = releaseInput
 
 	pcall(function()
 		local clickCatcher = New("TextButton", {
@@ -1774,100 +2349,68 @@ function Library:PlayLoadingScreen(onFinish)
 			ZIndex = 55,
 			Parent = root,
 		})
-		clickCatcher.MouseButton1Click:Connect(skip)
+		clickCatcher.MouseButton1Click:Connect(function()
+			if loading.phase ~= "download" then
+				skip()
+			end
+		end)
 	end)
 
-	-- SIRALAMA (zaman çizelgesi)
-	local function step(seconds, fn)
-		task.delay(at(seconds), function()
-			if loading.cancelled or loading.finished then return end
-			fn()
-		end)
+	--==========================================================================
+	-- FAZ 1 AKIŞI: indirme
+	--==========================================================================
+	local useDownloadScreen = self.Options.DownloadScreen ~= false
+	if not useDownloadScreen then
+		downloadScreen.group.Visible = false
 	end
 
-	-- 0.0  karartma → video açılışı
-	step(0.05, function()
-		applyCover()
-		Tween(letterTop, { Size = UDim2.new(1, 0, 0.085, 0) }, 0.9, Enum.EasingStyle.Expo, Enum.EasingDirection.Out)
-		Tween(letterBottom, {
-			Position = UDim2.new(0, 0, 0.915, 0),
-			Size = UDim2.new(1, 0, 0.085, 0),
-		}, 0.9, Enum.EasingStyle.Expo, Enum.EasingDirection.Out)
-	end)
+	downloadScreen:SetStatus("Bağlantı kuruluyor...")
+	downloadScreen:SetProgress(0, 1)
 
-	-- 0.8  BEST alttan gelir
-	step(0.8, function()
-		bestGroup.group.Position = UDim2.fromScale(0.5, 0.78)
-		bestGroup.scale.Scale = unit * 0.82
-		fadeText(bestGroup, 0, 0.18)
-		Tween(bestGroup.group, { Position = UDim2.fromScale(0.5, 0.59) }, 0.75, Enum.EasingStyle.Expo, Enum.EasingDirection.Out)
-		Tween(bestGroup.scale, { Scale = unit }, 0.75, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
-		Tween(bestGroup.glow, { TextColor3 = theme.Accent2 }, 0.4)
-	end)
-
-	-- 2.6  BEST gider
-	step(2.55, function()
-		Tween(bestGroup.group, { Position = UDim2.fromScale(0.5, 0.35) }, 0.45, Enum.EasingStyle.Quint, Enum.EasingDirection.In)
-		Tween(bestGroup.scale, { Scale = unit * 0.9 }, 0.45, Enum.EasingStyle.Quint)
-		fadeText(bestGroup, 1, 0.45)
-	end)
-
-	-- 3.0  ekran bölünür: enerji çizgisi + bantlar kapanır
-	step(3.0, function()
-		seam.BackgroundTransparency = 0.25
-		seamGlow.BackgroundTransparency = 0.75
-		Tween(letterTop, { Size = UDim2.new(1, 0, 0.19, 0) }, 0.55, Enum.EasingStyle.Expo, Enum.EasingDirection.InOut)
-		Tween(letterBottom, {
-			Position = UDim2.new(0, 0, 0.81, 0),
-			Size = UDim2.new(1, 0, 0.19, 0),
-		}, 0.55, Enum.EasingStyle.Expo, Enum.EasingDirection.InOut)
-		Tween(seam, { Size = UDim2.new(1, 0, 0, 2) }, 0.6, Enum.EasingStyle.Expo, Enum.EasingDirection.Out)
-		Tween(seamGlow, { Size = UDim2.new(1, 0, 0, 76 * unit) }, 0.6, Enum.EasingStyle.Expo, Enum.EasingDirection.Out)
-	end)
-
-	-- 3.25 UNIVERSAL (üstten) + SCRIPT (alttan)
-	step(3.25, function()
-		universalGroup.group.Position = UDim2.fromScale(0.5, 0.5 - 0.26)
-		universalGroup.scale.Scale = unit * 1.05
-		scriptGroup.group.Position = UDim2.fromScale(0.5, 0.5 + 0.26)
-		scriptGroup.scale.Scale = unit * 1.05
-
-		fadeText(universalGroup, 0, 0.2)
-		fadeText(scriptGroup, 0, 0.2)
-
-		Tween(universalGroup.group, { Position = UDim2.fromScale(0.5, 0.5 - 0.105) }, 0.65, Enum.EasingStyle.Expo, Enum.EasingDirection.Out)
-		Tween(scriptGroup.group, { Position = UDim2.fromScale(0.5, 0.5 + 0.105) }, 0.65, Enum.EasingStyle.Expo, Enum.EasingDirection.Out)
-		Tween(universalGroup.scale, { Scale = unit }, 0.6, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
-		Tween(scriptGroup.scale, { Scale = unit }, 0.6, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
-	end)
-
-	-- 4.1  enerji yükselir (nabız + sarsıntı)
-	step(4.1, function()
-		local pulseInfo = TweenInfo.new(0.22, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true)
-		pcall(function()
-			TweenService:Create(seamGlow, pulseInfo, { BackgroundTransparency = 0.35 }):Play()
-			TweenService:Create(seam, pulseInfo, { BackgroundTransparency = 0 }):Play()
-			TweenService:Create(universalGroup.glow, pulseInfo, { TextTransparency = 0.05 }):Play()
-			TweenService:Create(scriptGroup.glow, pulseInfo, { TextTransparency = 0.05 }):Play()
-		end)
-		for index = 1, 6 do
-			task.delay(at(index * 0.16), function()
+	task.spawn(function()
+		local asset = nil
+		local okResolve = pcall(function()
+			asset = Library:_resolveIntroVideo(function(current, total, phase)
 				if loading.cancelled or loading.finished then return end
-				local strength = math.floor((3 + index * 1.4) * unit)
-				root.Position = UDim2.fromOffset(math.random(-strength, strength), math.random(-strength, strength))
+				if phase == "cached" then
+					downloadScreen:SetStatus("Önbellek bulundu  •  hazırlanıyor")
+					downloadScreen:SetProgress(1, 1)
+				elseif phase == "download-start" then
+					downloadScreen:SetStatus("Video indiriliyor...")
+				elseif phase == "download" then
+					if total and total > 0 then
+						downloadScreen:SetProgress(current, total)
+						downloadScreen:SetStatus("Video indiriliyor... %" ..
+							tostring(math.floor((current / total) * 100 + 0.5)))
+					else
+						downloadScreen:SetStatus("Video indiriliyor... " ..
+							string.format("%.1f MB", (current or 0) / 1048576))
+					end
+				elseif phase == "write" then
+					downloadScreen:SetStatus("Dosya yazılıyor...")
+					downloadScreen:SetProgress(1, 1)
+				end
 			end)
+		end)
+
+		if loading.skipDownload and not asset then
+			downloadScreen:SetStatus("İndirme atlandı  •  arayüz modu")
 		end
-	end)
 
-	-- 5.35 patlama
-	step(5.35, function()
-		root.Position = UDim2.fromOffset(0, 0)
-		explode()
-	end)
+		if loading.cancelled or loading.finished then return end
 
-	-- otomatik bitiş güvencesi
-	step(6.6, function()
-		explode()
+		if asset then
+			downloadScreen:SetStatus("Hazır  •  sinematik başlıyor")
+			downloadScreen:SetProgress(1, 1)
+			task.wait(at(0.35))
+			if loading.cancelled or loading.finished then return end
+			startShowPhase(asset)
+		else
+			downloadScreen:SetStatus(Library._introVideoError or "Video kullanılamıyor  •  arayüz modu")
+			task.wait(at(0.8))
+			if loading.cancelled or loading.finished then return end
+			startShowPhase(nil)
+		end
 	end)
 
 	return loading
@@ -2502,9 +3045,9 @@ function Library:CreateWindow(config)
 
 	if self.Options.AnimateGradients ~= false then
 		pcall(function()
-			local borderTweenInfo = TweenInfo.new(18, Enum.EasingStyle.Linear, Enum.EasingDirection.Out, -1)
+			local borderTweenInfo = TweenInfo.new(18, EASE.Linear, DIR.Out, -1)
 			TweenService:Create(mainStrokeGradient, borderTweenInfo, { Rotation = 405 }):Play()
-			local logoTweenInfo = TweenInfo.new(10, Enum.EasingStyle.Linear, Enum.EasingDirection.Out, -1)
+			local logoTweenInfo = TweenInfo.new(10, EASE.Linear, DIR.Out, -1)
 			TweenService:Create(logoGradient, logoTweenInfo, { Rotation = 400 }):Play()
 			TweenService:Create(orbStrokeGradient, logoTweenInfo, { Rotation = 405 }):Play()
 		end)
@@ -2888,7 +3431,7 @@ function Library:CreateWindow(config)
 			Tween(self._marker, { Size = UDim2.new(0, 3, 0, 16), BackgroundTransparency = 0 }, 0.22)
 			TintIcon(self._icon, theme.Text)
 			page._frame.Position = UDim2.new(0, 0, 0, 8)
-			Tween(page._frame, { Position = UDim2.new(0, 0, 0, 0) }, 0.26, Enum.EasingStyle.Quint)
+			Tween(page._frame, { Position = UDim2.new(0, 0, 0, 0) }, 0.26, EASE.Quint)
 			self._window:_relayout(page)
 		end
 
@@ -2948,7 +3491,7 @@ function Library:CreateWindow(config)
 	function windowObject:SetScale(percent)
 		local value = (tonumber(percent) or 100) / 100
 		baseScale = Clamp(value, 0.5, 2)
-		Tween(uiScale, { Scale = baseScale }, 0.22, Enum.EasingStyle.Quad)
+		Tween(uiScale, { Scale = baseScale }, 0.22, EASE.Quad)
 		self:_relayoutAll()
 	end
 
@@ -3000,8 +3543,8 @@ function Library:CreateWindow(config)
 		HideTooltip()
 		Library:_closePopups()
 
-		Tween(uiScale, { Scale = baseScale * 0.96 }, 0.14, Enum.EasingStyle.Quad)
-		Tween(uiGroup, { GroupTransparency = 1 }, 0.14, Enum.EasingStyle.Quad)
+		Tween(uiScale, { Scale = baseScale * 0.96 }, 0.14, EASE.Quad)
+		Tween(uiGroup, { GroupTransparency = 1 }, 0.14, EASE.Quad)
 
 		task.delay(0.15, function()
 			if minimized and not self._destroyed then
@@ -3018,8 +3561,8 @@ function Library:CreateWindow(config)
 
 		applyHidden(false)
 		uiScale.Scale = baseScale
-		Tween(uiGroup, { GroupTransparency = 0 }, 0.16, Enum.EasingStyle.Quad)
-		Tween(uiScale, { Scale = baseScale }, 0.2, Enum.EasingStyle.Quint)
+		Tween(uiGroup, { GroupTransparency = 0 }, 0.16, EASE.Quad)
+		Tween(uiScale, { Scale = baseScale }, 0.2, EASE.Quint)
 		if Library.Options.Blur then
 			SetBlur(true)
 		end
@@ -3170,8 +3713,8 @@ function Library:CreateWindow(config)
 		uiGroup.GroupTransparency = 1
 		uiScale.Scale = baseScale * 0.93
 		task.delay(0.06, function()
-			Tween(uiGroup, { GroupTransparency = 0 }, 0.45, Enum.EasingStyle.Quad)
-			Tween(uiScale, { Scale = baseScale }, 0.6, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+			Tween(uiGroup, { GroupTransparency = 0 }, 0.45, EASE.Quad)
+			Tween(uiScale, { Scale = baseScale }, 0.6, EASE.Back, DIR.Out)
 		end)
 
 		local sweep = New("Frame", {
@@ -3193,7 +3736,7 @@ function Library:CreateWindow(config)
 			Parent = sweep,
 		})
 		task.delay(0.18, function()
-			Tween(sweep, { Position = UDim2.new(1, 320, 0, -120) }, 0.95, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+			Tween(sweep, { Position = UDim2.new(1, 320, 0, -120) }, 0.95, EASE.Quad, DIR.Out)
 			task.delay(1.05, function()
 				if sweep then sweep:Destroy() end
 			end)
@@ -3544,7 +4087,7 @@ CardAddToggle = function(card, text, opts, callback)
 		}, 0.18)
 		Tween(knob, {
 			Position = state and UDim2.new(0, 21, 0.5, 0) or UDim2.new(0, 3, 0.5, 0),
-		}, 0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+		}, 0.22, EASE.Back, DIR.Out)
 		if not silent then
 			SafeCallback(callback, state)
 		end
@@ -4194,8 +4737,8 @@ CardAddDropdown = function(card, text, opts, callback)
 
 		group.Position = UDim2.fromOffset(math.floor(menuX), math.floor(menuY))
 		local scale = New("UIScale", { Scale = 0.96, Parent = group })
-		Tween(scale, { Scale = 1 }, 0.16, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
-		Tween(group, { GroupTransparency = 0 }, 0.15, Enum.EasingStyle.Quad)
+		Tween(scale, { Scale = 1 }, 0.16, EASE.Back, DIR.Out)
+		Tween(group, { GroupTransparency = 0 }, 0.15, EASE.Quad)
 		Tween(chevron, { Rotation = 180 }, 0.2)
 		Tween(fieldStroke, { Transparency = 0.4, Color = theme.Accent }, 0.15)
 
@@ -4811,8 +5354,8 @@ CardAddColorPicker = function(card, text, opts, callback)
 
 		group.Position = UDim2.fromOffset(math.floor(popupX), math.floor(popupY))
 		local scale = New("UIScale", { Scale = 0.96, Parent = group })
-		Tween(scale, { Scale = 1 }, 0.16, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
-		Tween(group, { GroupTransparency = 0 }, 0.15, Enum.EasingStyle.Quad)
+		Tween(scale, { Scale = 1 }, 0.16, EASE.Back, DIR.Out)
+		Tween(group, { GroupTransparency = 0 }, 0.15, EASE.Quad)
 		Tween(buttonStroke, { Transparency = 0.4, Color = theme.Accent }, 0.15)
 
 		local function updateSV(input)
